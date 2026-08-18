@@ -1,0 +1,38 @@
+services:
+  app:
+    build:
+      context: .
+      dockerfile: deploy/Dockerfile
+    ports:
+      - "3113:3113"
+    environment:
+      APP_ENV: ${APP_ENV:-production}
+      DB_DRIVER: ${DB_DRIVER:-sqlite}
+      DATABASE_URL: ${DATABASE_URL:-}
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET is required}
+      CREDENTIAL_ENCRYPTION_KEY: ${CREDENTIAL_ENCRYPTION_KEY:?CREDENTIAL_ENCRYPTION_KEY is required}
+      TZ: ${TZ:-UTC}
+      API_LOG_QUEUE_SIZE: ${API_LOG_QUEUE_SIZE:-5000}
+      API_LOG_BATCH_SIZE: ${API_LOG_BATCH_SIZE:-100}
+    volumes:
+      - ${HOST_DATA_DIR:-./runtime/data}:/data
+      - ${HOST_CACHE_DIR:-./runtime/cache}:/cache
+    restart: unless-stopped
+
+  db:
+    profiles: ["postgres"]
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_DB: ${POSTGRES_DB:-openlistscraper}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  postgres_data:
