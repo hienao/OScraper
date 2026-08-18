@@ -34,7 +34,7 @@ func TestAnimeUsesTVEndpointAndDetail(t *testing.T) {
 			}
 			_, _ = writer.Write([]byte(`{"results":[]}`))
 		case "/3/tv/209867":
-			_, _ = writer.Write([]byte(`{"id":209867,"name":"Frieren","original_name":"葬送のフリーレン","first_air_date":"2023-09-29","number_of_seasons":2,"number_of_episodes":32,"genres":[{"id":16,"name":"Animation"}]}`))
+			_, _ = writer.Write([]byte(`{"id":209867,"name":"Frieren","original_name":"葬送のフリーレン","first_air_date":"2023-09-29","number_of_seasons":2,"number_of_episodes":32,"episode_run_time":[24,26],"genres":[{"id":16,"name":"Animation"}],"networks":[{"name":"Nippon TV"}],"origin_country":["JP"]}`))
 		default:
 			t.Fatalf("unexpected endpoint: %s", request.URL.Path)
 		}
@@ -48,7 +48,7 @@ func TestAnimeUsesTVEndpointAndDetail(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if detail.MediaType != "tv" || detail.Year != 2023 || detail.NumberOfEpisodes != 32 {
+	if detail.MediaType != "tv" || detail.Year != 2023 || detail.NumberOfEpisodes != 32 || detail.Runtime != 25 || detail.Country != "JP" || len(detail.Studios) != 1 {
 		t.Fatalf("unexpected detail: %#v", detail)
 	}
 }

@@ -24,6 +24,7 @@ type MediaCandidate struct {
 	Path               string    `gorm:"size:1000;not null" json:"path"`
 	Kind               string    `gorm:"size:20;index;not null" json:"kind"`
 	Fingerprint        string    `gorm:"size:80;not null" json:"fingerprint"`
+	ManifestJSON       string    `gorm:"type:text" json:"-"`
 	RepresentativeFile string    `gorm:"size:1000" json:"representative_file"`
 	ParsedTitle        string    `gorm:"size:500" json:"parsed_title"`
 	Year               *int      `json:"year,omitempty"`

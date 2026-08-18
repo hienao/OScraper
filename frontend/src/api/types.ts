@@ -173,6 +173,11 @@ export interface TMDBDetail extends TMDBSearchResult {
   number_of_seasons?: number
   number_of_episodes?: number
   original_language?: string
+  tagline?: string
+  status?: string
+  imdb_id?: string
+  country?: string
+  studios: string[]
 }
 
 export interface RenameItem {
@@ -193,7 +198,9 @@ export interface PreviewPlan {
   proposed_directory_renames: RenameItem[]
   proposed_file_renames: RenameItem[]
   generated_files: string[]
+  artifacts: { path: string; kind: 'nfo' | 'poster' | 'backdrop'; source_url?: string; content?: string }[]
   warnings: string[]
+  conflicts: { code: string; source_path?: string; target_path?: string }[]
 }
 
 export interface ScrapePreview {

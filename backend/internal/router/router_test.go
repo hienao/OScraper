@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"openlistscraper/config"
@@ -86,7 +87,7 @@ func TestAuthenticatedConnectionTargetAndScanFlow(t *testing.T) {
 	}, http.StatusCreated)
 	connectionID := responseID(t, connection)
 	target := requestJSON(t, server.URL, http.MethodPost, "/api/scrape-targets", token, map[string]any{
-		"connection_id": connectionID, "name": "Movies", "root_path": "/media/Movies", "library_type": "movie", "rename_enabled": false, "enabled": true,
+		"connection_id": connectionID, "name": "Movies", "root_path": "/media/Movies", "library_type": "movie", "rename_enabled": true, "enabled": true,
 	}, http.StatusCreated)
 	targetID := responseID(t, target)
 	scan := requestJSON(t, server.URL, http.MethodPost, fmt.Sprintf("/api/scrape-targets/%d/scans?refresh=true", targetID), token, nil, http.StatusCreated)
@@ -122,6 +123,13 @@ func TestAuthenticatedConnectionTargetAndScanFlow(t *testing.T) {
 	plan := preview["plan"].(map[string]any)
 	if int(match["id"].(float64)) != 329865 || plan["read_only"] != true || plan["ready"] != true || preview["fingerprint"] != first["fingerprint"] {
 		t.Fatalf("unexpected preview: %s", previewBody)
+	}
+	if len(plan["proposed_directory_renames"].([]any)) != 1 || len(plan["proposed_file_renames"].([]any)) != 1 || len(plan["conflicts"].([]any)) != 0 {
+		t.Fatalf("live directory was not expanded into a complete rename plan: %s", previewBody)
+	}
+	artifacts := plan["artifacts"].([]any)
+	if len(artifacts) != 2 || !strings.Contains(artifacts[0].(map[string]any)["content"].(string), "<movie>") {
+		t.Fatalf("metadata artifacts were not included in the immutable preview: %s", previewBody)
 	}
 }
 

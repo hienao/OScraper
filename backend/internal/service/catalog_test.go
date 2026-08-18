@@ -117,3 +117,46 @@ func TestScanRejectsEntryOutsideCandidateRoot(t *testing.T) {
 		t.Fatalf("unexpected error: %#v", err)
 	}
 }
+
+func TestCandidateInspectionDetectsStaleFingerprint(t *testing.T) {
+	levels := map[string][]openlist.DirectoryEntry{
+		"/media/library":                {{Name: "Arrival (2016)", Path: "/media/library/Arrival (2016)", IsDir: true}},
+		"/media/library/Arrival (2016)": {{Name: "Arrival.mkv", Path: "/media/library/Arrival (2016)/Arrival.mkv", Size: 100, Modified: "v1"}},
+	}
+	service, _ := newCatalogTestService(t, "movie", levels)
+	scan, err := service.Scan(context.Background(), 1, 1, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if scan.Candidates[0].ManifestJSON == "" {
+		t.Fatal("scan did not persist the candidate manifest")
+	}
+	inspection, err := service.InspectCandidate(context.Background(), 1, scan.Candidates[0].ID, true)
+	if err != nil || inspection.Stale {
+		t.Fatalf("fresh candidate reported stale: %#v %v", inspection, err)
+	}
+	levels["/media/library/Arrival (2016)"] = []openlist.DirectoryEntry{{Name: "Arrival.mkv", Path: "/media/library/Arrival (2016)/Arrival.mkv", Size: 200, Modified: "v2"}}
+	inspection, err = service.InspectCandidate(context.Background(), 1, scan.Candidates[0].ID, true)
+	if err != nil || !inspection.Stale {
+		t.Fatalf("changed candidate was not stale: %#v %v", inspection, err)
+	}
+}
+
+func TestFlatMovieFingerprintIncludesCompanionFiles(t *testing.T) {
+	levels := map[string][]openlist.DirectoryEntry{
+		"/media/library": {
+			{Name: "Arrival.mkv", Path: "/media/library/Arrival.mkv", Size: 100, Modified: "v1"},
+			{Name: "Arrival.zh-CN.ass", Path: "/media/library/Arrival.zh-CN.ass", Size: 10, Modified: "v1"},
+		},
+	}
+	service, _ := newCatalogTestService(t, "movie", levels)
+	scan, err := service.Scan(context.Background(), 1, 1, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	levels["/media/library"][1].Modified = "v2"
+	inspection, err := service.InspectCandidate(context.Background(), 1, scan.Candidates[0].ID, true)
+	if err != nil || !inspection.Stale {
+		t.Fatalf("changed companion file was not included in the fingerprint: %#v %v", inspection, err)
+	}
+}

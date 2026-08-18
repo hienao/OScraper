@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"openlistscraper/internal/model"
+	"openlistscraper/internal/openlist"
 	"openlistscraper/internal/provider/tmdb"
 	"openlistscraper/pkg/cryptoutil"
 
@@ -16,6 +17,15 @@ import (
 type stubTMDBCatalog struct {
 	results []tmdb.SearchResult
 	detail  *tmdb.Detail
+}
+
+type stubCandidateInspector struct {
+	inspection *CandidateInspection
+	err        error
+}
+
+func (s stubCandidateInspector) InspectCandidate(context.Context, uint, uint, bool) (*CandidateInspection, error) {
+	return s.inspection, s.err
 }
 
 func (s *stubTMDBCatalog) Search(context.Context, tmdb.Config, string, string, int) ([]tmdb.SearchResult, error) {
@@ -84,7 +94,7 @@ func TestPreviewSearchPrioritizesExactYear(t *testing.T) {
 }
 
 func TestCreatePreviewPersistsImmutableMatchAndPlan(t *testing.T) {
-	provider := &stubTMDBCatalog{detail: &tmdb.Detail{ID: 329865, MediaType: "movie", Title: "Arrival/降临", OriginalTitle: "Arrival", Year: 2016, Overview: "First snapshot"}}
+	provider := &stubTMDBCatalog{detail: &tmdb.Detail{ID: 329865, MediaType: "movie", Title: "Arrival/降临", OriginalTitle: "Arrival", Year: 2016, Overview: "First snapshot", PosterURL: "https://image.example/poster.jpg", BackdropURL: "https://image.example/backdrop.jpg"}}
 	service, _ := newPreviewTestService(t, provider)
 	created, err := service.Create(context.Background(), 1, 1, CreatePreviewRequest{CandidateID: 1, TMDBID: 329865})
 	if err != nil {
@@ -121,5 +131,20 @@ func TestRenameDisabledKeepsMetadataAtCurrentLocation(t *testing.T) {
 	}
 	if created.Plan.GeneratedFiles[0] != "/movies/Arrival (2016) {tmdbid-329865}.nfo" {
 		t.Fatalf("metadata target escaped current directory: %#v", created.Plan.GeneratedFiles)
+	}
+}
+
+func TestCreatePreviewRejectsCandidateChangedAfterScan(t *testing.T) {
+	provider := &stubTMDBCatalog{detail: &tmdb.Detail{ID: 329865, MediaType: "movie", Title: "Arrival", Year: 2016}}
+	service, _ := newPreviewTestService(t, provider)
+	service.inspector = stubCandidateInspector{inspection: &CandidateInspection{
+		Entries:     []openlist.DirectoryEntry{{Name: "Arrival.mkv", Path: "/movies/Arrival.mkv", Size: 200}},
+		Fingerprint: "sha256:changed",
+		Stale:       true,
+	}}
+	_, err := service.Create(context.Background(), 1, 1, CreatePreviewRequest{CandidateID: 1, TMDBID: 329865})
+	serviceError, ok := err.(*Error)
+	if !ok || serviceError.Code != "preview.stale" {
+		t.Fatalf("changed candidate did not reject preview creation: %#v", err)
 	}
 }

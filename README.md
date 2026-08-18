@@ -14,13 +14,15 @@ The current development slice includes:
 - persistent scan runs, media candidates, directory fingerprints, and scan audit events;
 - encrypted TMDB configuration with live connectivity testing;
 - ostrm-compatible movie/TV search, exact-year preference, and precise TMDB ID lookup;
-- immutable 24-hour scrape previews containing the scan fingerprint, match snapshot, rename plan, and metadata file list;
+- immutable 24-hour scrape previews containing the scan fingerprint, match snapshot, complete rename plan, and metadata artifacts;
+- fresh OpenList conflict/staleness checks for movie, season, episode, subtitle, image, and NFO paths;
+- Kodi/Jellyfin/Emby-compatible movie and TV NFO XML previews with escaped TMDB metadata and available image download sources;
 - API, application, and administrator audit logs;
 - a bilingual, responsive light/dark web interface;
 - SQLite by default with optional PostgreSQL support;
 - a single Docker image served on port `3113`.
 
-Fresh OpenList conflict checks, complete TV/Anime season and episode rename expansion, NFO/image generation, metadata upload, and recoverable scrape jobs are the next implementation milestones. See the [complete design](docs/design.md).
+OpenList metadata upload, per-episode TMDB metadata, and recoverable scrape jobs are the next implementation milestones. See the [complete design](docs/design.md).
 
 ## Local development
 

@@ -46,22 +46,27 @@ type Genre struct {
 }
 
 type Detail struct {
-	ID               int     `json:"id"`
-	MediaType        string  `json:"media_type"`
-	Title            string  `json:"title"`
-	OriginalTitle    string  `json:"original_title"`
-	Year             int     `json:"year,omitempty"`
-	ReleaseDate      string  `json:"release_date,omitempty"`
-	Overview         string  `json:"overview"`
-	PosterURL        string  `json:"poster_url,omitempty"`
-	BackdropURL      string  `json:"backdrop_url,omitempty"`
-	VoteAverage      float64 `json:"vote_average"`
-	VoteCount        int     `json:"vote_count"`
-	Genres           []Genre `json:"genres"`
-	Runtime          int     `json:"runtime,omitempty"`
-	NumberOfSeasons  int     `json:"number_of_seasons,omitempty"`
-	NumberOfEpisodes int     `json:"number_of_episodes,omitempty"`
-	OriginalLanguage string  `json:"original_language,omitempty"`
+	ID               int      `json:"id"`
+	MediaType        string   `json:"media_type"`
+	Title            string   `json:"title"`
+	OriginalTitle    string   `json:"original_title"`
+	Year             int      `json:"year,omitempty"`
+	ReleaseDate      string   `json:"release_date,omitempty"`
+	Overview         string   `json:"overview"`
+	PosterURL        string   `json:"poster_url,omitempty"`
+	BackdropURL      string   `json:"backdrop_url,omitempty"`
+	VoteAverage      float64  `json:"vote_average"`
+	VoteCount        int      `json:"vote_count"`
+	Genres           []Genre  `json:"genres"`
+	Runtime          int      `json:"runtime,omitempty"`
+	NumberOfSeasons  int      `json:"number_of_seasons,omitempty"`
+	NumberOfEpisodes int      `json:"number_of_episodes,omitempty"`
+	OriginalLanguage string   `json:"original_language,omitempty"`
+	Tagline          string   `json:"tagline,omitempty"`
+	Status           string   `json:"status,omitempty"`
+	IMDBID           string   `json:"imdb_id,omitempty"`
+	Country          string   `json:"country,omitempty"`
+	Studios          []string `json:"studios"`
 }
 
 type Error struct {
@@ -155,8 +160,9 @@ func (c *Client) Detail(ctx context.Context, config Config, mediaType string, id
 		ID: item.ID, MediaType: endpointType, Title: title, OriginalTitle: firstNonBlank(item.OriginalTitle, item.OriginalName),
 		Year: yearFromDate(date), ReleaseDate: date, Overview: item.Overview,
 		PosterURL: imageURL(config, item.PosterPath, config.PosterSize), BackdropURL: imageURL(config, item.BackdropPath, config.BackdropSize),
-		VoteAverage: item.VoteAverage, VoteCount: item.VoteCount, Genres: item.Genres, Runtime: item.Runtime,
+		VoteAverage: item.VoteAverage, VoteCount: item.VoteCount, Genres: item.Genres, Runtime: detailRuntime(item, endpointType),
 		NumberOfSeasons: item.NumberOfSeasons, NumberOfEpisodes: item.NumberOfEpisodes, OriginalLanguage: item.OriginalLanguage,
+		Tagline: item.Tagline, Status: item.Status, IMDBID: item.IMDBID, Country: detailCountry(item, endpointType), Studios: detailStudios(item, endpointType),
 	}, nil
 }
 
@@ -284,9 +290,71 @@ type rawResult struct {
 
 type rawDetail struct {
 	rawResult
-	Genres           []Genre `json:"genres"`
-	Runtime          int     `json:"runtime"`
-	NumberOfSeasons  int     `json:"number_of_seasons"`
-	NumberOfEpisodes int     `json:"number_of_episodes"`
-	OriginalLanguage string  `json:"original_language"`
+	Genres              []Genre       `json:"genres"`
+	Runtime             int           `json:"runtime"`
+	EpisodeRunTime      []int         `json:"episode_run_time"`
+	NumberOfSeasons     int           `json:"number_of_seasons"`
+	NumberOfEpisodes    int           `json:"number_of_episodes"`
+	OriginalLanguage    string        `json:"original_language"`
+	Tagline             string        `json:"tagline"`
+	Status              string        `json:"status"`
+	IMDBID              string        `json:"imdb_id"`
+	ProductionCompanies []namedEntity `json:"production_companies"`
+	ProductionCountries []country     `json:"production_countries"`
+	Networks            []namedEntity `json:"networks"`
+	OriginCountry       []string      `json:"origin_country"`
+}
+
+type namedEntity struct {
+	Name string `json:"name"`
+}
+
+type country struct {
+	Code string `json:"iso_3166_1"`
+	Name string `json:"name"`
+}
+
+func detailStudios(item rawDetail, mediaType string) []string {
+	entities := item.ProductionCompanies
+	if mediaType == "tv" && len(item.Networks) > 0 {
+		entities = item.Networks
+	}
+	studios := make([]string, 0, len(entities))
+	for _, entity := range entities {
+		if name := strings.TrimSpace(entity.Name); name != "" {
+			studios = append(studios, name)
+		}
+	}
+	return studios
+}
+
+func detailCountry(item rawDetail, mediaType string) string {
+	if mediaType == "tv" && len(item.OriginCountry) > 0 {
+		return strings.TrimSpace(item.OriginCountry[0])
+	}
+	if len(item.ProductionCountries) > 0 {
+		if name := strings.TrimSpace(item.ProductionCountries[0].Name); name != "" {
+			return name
+		}
+		return strings.TrimSpace(item.ProductionCountries[0].Code)
+	}
+	return ""
+}
+
+func detailRuntime(item rawDetail, mediaType string) int {
+	if item.Runtime > 0 || mediaType != "tv" || len(item.EpisodeRunTime) == 0 {
+		return item.Runtime
+	}
+	total := 0
+	count := 0
+	for _, runtime := range item.EpisodeRunTime {
+		if runtime > 0 {
+			total += runtime
+			count++
+		}
+	}
+	if count == 0 {
+		return 0
+	}
+	return total / count
 }

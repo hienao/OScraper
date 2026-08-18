@@ -4,15 +4,13 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"path"
 	"sort"
-	"strconv"
 	"strings"
 	"time"
 	"unicode/utf8"
 
-	"openlistscraper/internal/media"
 	"openlistscraper/internal/model"
+	"openlistscraper/internal/openlist"
 	"openlistscraper/internal/provider/tmdb"
 	"openlistscraper/internal/repository"
 
@@ -27,12 +25,17 @@ type TMDBCatalog interface {
 }
 
 type PreviewService struct {
-	targets  *repository.TargetRepository
-	catalog  *repository.CatalogRepository
-	previews *repository.PreviewRepository
-	audit    *repository.AuditRepository
-	settings *SettingService
-	provider TMDBCatalog
+	targets   *repository.TargetRepository
+	catalog   *repository.CatalogRepository
+	previews  *repository.PreviewRepository
+	audit     *repository.AuditRepository
+	settings  *SettingService
+	provider  TMDBCatalog
+	inspector CandidateInspector
+}
+
+type CandidateInspector interface {
+	InspectCandidate(ctx context.Context, targetID, candidateID uint, refresh bool) (*CandidateInspection, error)
 }
 
 type PreviewSearchRequest struct {
@@ -54,19 +57,34 @@ type RenameItem struct {
 	AssetType  string `json:"asset_type"`
 }
 
+type PreviewArtifact struct {
+	Path      string `json:"path"`
+	Kind      string `json:"kind"`
+	SourceURL string `json:"source_url,omitempty"`
+	Content   string `json:"content,omitempty"`
+}
+
 type PreviewPlan struct {
-	ReadOnly                 bool         `json:"read_only"`
-	Ready                    bool         `json:"ready"`
-	RenameAllowed            bool         `json:"rename_allowed"`
-	OrganizeFlatMovie        bool         `json:"organize_flat_movie"`
-	SourcePath               string       `json:"source_path"`
-	ProposedDirectoryName    string       `json:"proposed_directory_name"`
-	ProposedDirectoryPath    string       `json:"proposed_directory_path"`
-	ProposedDirectoryCreates []string     `json:"proposed_directory_creates"`
-	ProposedDirectoryRenames []RenameItem `json:"proposed_directory_renames"`
-	ProposedFileRenames      []RenameItem `json:"proposed_file_renames"`
-	GeneratedFiles           []string     `json:"generated_files"`
-	Warnings                 []string     `json:"warnings"`
+	ReadOnly                 bool              `json:"read_only"`
+	Ready                    bool              `json:"ready"`
+	RenameAllowed            bool              `json:"rename_allowed"`
+	OrganizeFlatMovie        bool              `json:"organize_flat_movie"`
+	SourcePath               string            `json:"source_path"`
+	ProposedDirectoryName    string            `json:"proposed_directory_name"`
+	ProposedDirectoryPath    string            `json:"proposed_directory_path"`
+	ProposedDirectoryCreates []string          `json:"proposed_directory_creates"`
+	ProposedDirectoryRenames []RenameItem      `json:"proposed_directory_renames"`
+	ProposedFileRenames      []RenameItem      `json:"proposed_file_renames"`
+	GeneratedFiles           []string          `json:"generated_files"`
+	Artifacts                []PreviewArtifact `json:"artifacts"`
+	Warnings                 []string          `json:"warnings"`
+	Conflicts                []PlanConflict    `json:"conflicts"`
+}
+
+type PlanConflict struct {
+	Code       string `json:"code"`
+	SourcePath string `json:"source_path,omitempty"`
+	TargetPath string `json:"target_path,omitempty"`
 }
 
 type PreviewResponse struct {
@@ -80,11 +98,15 @@ type PreviewResponse struct {
 	CreatedAt   time.Time   `json:"created_at"`
 }
 
-func NewPreviewService(db *gorm.DB, settings *SettingService, provider TMDBCatalog) *PreviewService {
-	return &PreviewService{
+func NewPreviewService(db *gorm.DB, settings *SettingService, provider TMDBCatalog, inspectors ...CandidateInspector) *PreviewService {
+	previewService := &PreviewService{
 		targets: repository.NewTargetRepository(db), catalog: repository.NewCatalogRepository(db),
 		previews: repository.NewPreviewRepository(db), audit: repository.NewAuditRepository(db), settings: settings, provider: provider,
 	}
+	if len(inspectors) > 0 {
+		previewService.inspector = inspectors[0]
+	}
+	return previewService
 }
 
 func (s *PreviewService) Search(ctx context.Context, targetID uint, request PreviewSearchRequest) ([]tmdb.SearchResult, error) {
@@ -133,6 +155,21 @@ func (s *PreviewService) Create(ctx context.Context, targetID, actorID uint, req
 	if err != nil {
 		return nil, err
 	}
+	var entries []openlist.DirectoryEntry
+	var siblings []openlist.DirectoryEntry
+	if s.inspector != nil {
+		inspection, inspectErr := s.inspector.InspectCandidate(ctx, targetID, candidate.ID, true)
+		if inspectErr != nil {
+			return nil, inspectErr
+		}
+		if inspection.Stale {
+			return nil, Conflict("preview.stale", "Media directory changed after the scan; run a new scan before previewing")
+		}
+		entries = inspection.Entries
+		siblings = inspection.Siblings
+	} else if candidate.ManifestJSON != "" {
+		_ = json.Unmarshal([]byte(candidate.ManifestJSON), &entries)
+	}
 	config, hasKey, err := s.settings.TMDBConfig()
 	if err != nil {
 		return nil, err
@@ -158,7 +195,7 @@ func (s *PreviewService) Create(ctx context.Context, targetID, actorID uint, req
 	if err != nil {
 		return nil, mapTMDBError(err)
 	}
-	plan := buildPreviewPlan(target, candidate, detail)
+	plan := buildFullPreviewPlan(target, candidate, detail, entries, siblings)
 	matchJSON, err := json.Marshal(detail)
 	if err != nil {
 		return nil, Internal("preview.encode_failed", "Failed to encode TMDB preview", err)
@@ -217,61 +254,6 @@ func (s *PreviewService) requireCandidate(targetID, candidateID uint) (*model.Me
 	return candidate, target, nil
 }
 
-func buildPreviewPlan(target *model.ScrapeTarget, candidate *model.MediaCandidate, detail *tmdb.Detail) PreviewPlan {
-	standardName := safeMediaName(detail.Title)
-	if detail.Year > 0 {
-		standardName += " (" + strconv.Itoa(detail.Year) + ")"
-	}
-	standardName += " {tmdbid-" + strconv.Itoa(detail.ID) + "}"
-	isFlatMovie := candidate.Kind == "movie" && media.IsVideoFile(path.Base(candidate.Path))
-	parent := path.Dir(candidate.Path)
-	if !isFlatMovie {
-		parent = path.Dir(candidate.Path)
-	}
-	targetPath := path.Join(parent, standardName)
-	finalDirectoryPath := targetPath
-	if !target.RenameEnabled {
-		if isFlatMovie {
-			finalDirectoryPath = path.Dir(candidate.Path)
-		} else {
-			finalDirectoryPath = candidate.Path
-		}
-	}
-	plan := PreviewPlan{
-		ReadOnly: true, Ready: detail.ID > 0 && detail.Title != "" && detail.Year > 0,
-		RenameAllowed: target.RenameEnabled, OrganizeFlatMovie: isFlatMovie, SourcePath: candidate.Path,
-		ProposedDirectoryName: path.Base(finalDirectoryPath), ProposedDirectoryPath: finalDirectoryPath,
-		ProposedDirectoryCreates: []string{}, ProposedDirectoryRenames: []RenameItem{}, ProposedFileRenames: []RenameItem{}, Warnings: []string{"conflict_check_pending"},
-	}
-	if target.RenameEnabled && isFlatMovie {
-		plan.ProposedDirectoryCreates = append(plan.ProposedDirectoryCreates, targetPath)
-	}
-	if target.RenameEnabled && !isFlatMovie && candidate.Path != targetPath {
-		plan.ProposedDirectoryRenames = append(plan.ProposedDirectoryRenames, RenameItem{SourcePath: candidate.Path, TargetPath: targetPath, AssetType: "directory"})
-	}
-	if candidate.Kind == "movie" {
-		extension := path.Ext(candidate.RepresentativeFile)
-		sourceFile := candidate.Path
-		if !isFlatMovie {
-			sourceFile = path.Join(candidate.Path, candidate.RepresentativeFile)
-		}
-		if target.RenameEnabled {
-			plan.ProposedFileRenames = append(plan.ProposedFileRenames, RenameItem{SourcePath: sourceFile, TargetPath: path.Join(targetPath, standardName+extension), AssetType: "video"})
-		}
-		plan.GeneratedFiles = []string{path.Join(finalDirectoryPath, standardName+".nfo"), path.Join(finalDirectoryPath, standardName+"-poster.jpg"), path.Join(finalDirectoryPath, standardName+"-backdrop.jpg")}
-	} else {
-		plan.GeneratedFiles = []string{path.Join(finalDirectoryPath, "tvshow.nfo"), path.Join(finalDirectoryPath, "poster.jpg"), path.Join(finalDirectoryPath, "fanart.jpg")}
-		plan.Warnings = append(plan.Warnings, "episode_file_plan_pending")
-	}
-	if !target.RenameEnabled {
-		plan.Warnings = append(plan.Warnings, "rename_disabled")
-	}
-	if detail.Year == 0 {
-		plan.Warnings = append(plan.Warnings, "year_missing")
-	}
-	return plan
-}
-
 func safeMediaName(value string) string {
 	value = strings.NewReplacer("/", "／", "\\", "＼").Replace(strings.TrimSpace(value))
 	value = strings.Map(func(character rune) rune {
@@ -292,6 +274,27 @@ func safeMediaName(value string) string {
 }
 
 func previewResponse(preview *model.ScrapePreview, match tmdb.Detail, plan PreviewPlan) *PreviewResponse {
+	if plan.ProposedDirectoryCreates == nil {
+		plan.ProposedDirectoryCreates = []string{}
+	}
+	if plan.ProposedDirectoryRenames == nil {
+		plan.ProposedDirectoryRenames = []RenameItem{}
+	}
+	if plan.ProposedFileRenames == nil {
+		plan.ProposedFileRenames = []RenameItem{}
+	}
+	if plan.GeneratedFiles == nil {
+		plan.GeneratedFiles = []string{}
+	}
+	if plan.Artifacts == nil {
+		plan.Artifacts = []PreviewArtifact{}
+	}
+	if plan.Warnings == nil {
+		plan.Warnings = []string{}
+	}
+	if plan.Conflicts == nil {
+		plan.Conflicts = []PlanConflict{}
+	}
 	return &PreviewResponse{
 		ID: preview.ID, TargetID: preview.TargetID, CandidateID: preview.CandidateID,
 		Fingerprint: preview.Fingerprint, Match: match, Plan: plan, ExpiresAt: preview.ExpiresAt, CreatedAt: preview.CreatedAt,

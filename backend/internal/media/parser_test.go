@@ -46,3 +46,31 @@ func TestVideoExtensionsAreCaseInsensitive(t *testing.T) {
 		t.Fatal("unexpected video extension classification")
 	}
 }
+
+func TestContainedSeasonDirectorySemantics(t *testing.T) {
+	checks := map[string]int{
+		"黑袍纠察队 第四季 1080p Remux":     4,
+		"The Boys Season 4 Remux":   4,
+		"The.Boys.S04.2160p":        4,
+		"The Boys Specials":         0,
+		"The Boys S04 Season 4 第四季": 4,
+	}
+	for value, expected := range checks {
+		result := ParseSeasonDirectoryName(value)
+		if result.Status != "matched" || result.Season == nil || *result.Season != expected {
+			t.Fatalf("%q: unexpected result %#v", value, result)
+		}
+	}
+	if result := ParseSeasonDirectoryName("S03 第四季"); result.Status != "ambiguous" {
+		t.Fatalf("expected ambiguity, got %#v", result)
+	}
+	for _, value := range []string{"四季酒店 1080p Remux", "The Boys S04E01 1080p"} {
+		if result := ParseSeasonDirectoryName(value); result.Status != "no_match" {
+			t.Fatalf("%q should not match: %#v", value, result)
+		}
+	}
+	parsed := ParseCandidate("The Boys", "黑袍纠察队 第四季 1080p Remux/E01.mkv", "tv")
+	if parsed.Season == nil || *parsed.Season != 4 || parsed.Episode == nil || *parsed.Episode != 1 {
+		t.Fatalf("compound season directory did not inform episode parsing: %#v", parsed)
+	}
+}

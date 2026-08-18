@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"path"
@@ -53,6 +54,14 @@ type candidateFiles struct {
 	entries        []openlist.DirectoryEntry
 	representative string
 	videos         int
+}
+
+type CandidateInspection struct {
+	Candidate   *model.MediaCandidate
+	Entries     []openlist.DirectoryEntry
+	Siblings    []openlist.DirectoryEntry
+	Fingerprint string
+	Stale       bool
 }
 
 func NewCatalogService(db *gorm.DB, cipher *cryptoutil.Cipher, client DirectoryBrowser) *CatalogService {
@@ -167,6 +176,51 @@ func (s *CatalogService) Candidates(targetID, scanID uint) ([]model.MediaCandida
 	return candidates, nil
 }
 
+func (s *CatalogService) InspectCandidate(ctx context.Context, targetID, candidateID uint, refresh bool) (*CandidateInspection, error) {
+	target, connection, token, err := s.scanCredentials(targetID)
+	if err != nil {
+		return nil, err
+	}
+	candidate, err := s.catalog.FindCandidate(candidateID, targetID)
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, NotFound("candidate.not_found", "Media candidate not found")
+	}
+	if err != nil {
+		return nil, Internal("candidate.lookup_failed", "Failed to load media candidate", err)
+	}
+	if !openlist.IsWithinPath(target.RootPath, candidate.Path) {
+		return nil, Forbidden("candidate.path_outside_root", "Media candidate is outside the scrape target root")
+	}
+	parentPath := path.Dir(candidate.Path)
+	siblings, err := s.listDirectory(ctx, connection, token, parentPath, refresh)
+	if err != nil {
+		return nil, mapOpenListError(err)
+	}
+	var entries []openlist.DirectoryEntry
+	if media.IsVideoFile(path.Base(candidate.Path)) {
+		found := false
+		for _, entry := range siblings {
+			if entry.Path == candidate.Path && !entry.IsDir {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return nil, Conflict("candidate.source_missing", "Media candidate no longer exists in OpenList")
+		}
+		entries = relatedFlatAssets(candidate.Path, siblings)
+	} else {
+		state := &scanState{}
+		files, walkErr := s.walk(ctx, connection, token, candidate.Path, candidate.Path, 1, refresh, state)
+		if walkErr != nil {
+			return nil, walkErr
+		}
+		entries = files.entries
+	}
+	currentFingerprint := fingerprint(entries)
+	return &CandidateInspection{Candidate: candidate, Entries: entries, Siblings: siblings, Fingerprint: currentFingerprint, Stale: currentFingerprint != candidate.Fingerprint}, nil
+}
+
 func (s *CatalogService) discover(ctx context.Context, target *model.ScrapeTarget, connection *model.OpenListConnection, token string, refresh bool) ([]model.MediaCandidate, error) {
 	rootEntries, err := s.listDirectory(ctx, connection, token, target.RootPath, refresh)
 	if err != nil {
@@ -183,7 +237,7 @@ func (s *CatalogService) discover(ctx context.Context, target *model.ScrapeTarge
 		}
 		if target.LibraryType == "movie" && !entry.IsDir && media.IsVideoFile(entry.Name) {
 			info := media.ParseCandidate(strings.TrimSuffix(entry.Name, path.Ext(entry.Name)), entry.Name, target.LibraryType)
-			candidates = append(candidates, makeCandidate(entry.Path, target.LibraryType, info, entry.Name, 1, []openlist.DirectoryEntry{entry}))
+			candidates = append(candidates, makeCandidate(entry.Path, target.LibraryType, info, entry.Name, 1, relatedFlatAssets(entry.Path, rootEntries)))
 			continue
 		}
 		if !entry.IsDir {
@@ -314,9 +368,11 @@ func makeCandidate(candidatePath, kind string, info media.Info, representative s
 	if info.Confidence < 70 {
 		status = "needs_review"
 	}
+	manifest, _ := json.Marshal(entries)
 	return model.MediaCandidate{
 		Path: candidatePath, Kind: kind, Fingerprint: fingerprint(entries), RepresentativeFile: representative,
-		ParsedTitle: info.Title, Year: info.Year, Season: info.Season, Episode: info.Episode, TMDBID: info.TMDBID,
+		ManifestJSON: string(manifest),
+		ParsedTitle:  info.Title, Year: info.Year, Season: info.Season, Episode: info.Episode, TMDBID: info.TMDBID,
 		Confidence: info.Confidence, VideoCount: videoCount, Status: status,
 	}
 }

@@ -33,7 +33,7 @@ func Setup(cfg *config.Config, db *gorm.DB, logManager *logging.Manager, credent
 	catalogService := service.NewCatalogService(db, credentialCipher, openListClient)
 	tmdbClient := tmdb.NewClient()
 	settingService := service.NewSettingService(db, credentialCipher, tmdbClient)
-	previewService := service.NewPreviewService(db, settingService, tmdbClient)
+	previewService := service.NewPreviewService(db, settingService, tmdbClient, catalogService)
 
 	authHandler := handler.NewAuthHandler(authService)
 	connectionHandler := handler.NewConnectionHandler(connectionService)

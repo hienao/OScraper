@@ -8,17 +8,21 @@ import (
 )
 
 var (
-	tmdbIDPattern        = regexp.MustCompile(`(?i)\{tmdbid-(\d+)\}`)
-	yearPattern          = regexp.MustCompile(`(?i)^(.*?)[\s._\-\[(]+((?:19|20)\d{2})[\])]?(?:\D.*)?$`)
-	seasonEpisodePattern = regexp.MustCompile(`(?i)(?:^|[\s._\-\[])S(\d{1,2})[\s._-]*E(\d{1,4})(?:\D|$)`)
-	xEpisodePattern      = regexp.MustCompile(`(?i)(?:^|\D)(\d{1,2})x(\d{1,4})(?:\D|$)`)
-	episodePattern       = regexp.MustCompile(`(?i)(?:^|[\s._\-\[])E(?:PISODE|P)?[\s._-]*(\d{1,4})(?:\D|$)`)
-	absolutePattern      = regexp.MustCompile(`(?i)(?:^|[\s._\-\[])(\d{1,4})(?:v\d+)?(?:[\s._\-\]]|$)`)
-	seasonPattern        = regexp.MustCompile(`(?i)^(?:season|s)[\s._-]*(\d{1,2})$`)
-	chineseSeasonPattern = regexp.MustCompile(`^第([0-9零〇一二两三四五六七八九十]+)季$`)
-	specialsPattern      = regexp.MustCompile(`(?i)^(?:specials?|special episodes?|特别篇|特别季|特典)$`)
-	releaseTagPattern    = regexp.MustCompile(`(?i)\b(?:2160p|1080p|720p|480p|4k|uhd|hdr|bluray|web-?dl|webrip|hdtv|x26[45]|h26[45]|hevc|avc|aac|dts|flac|10bit|remux)\b`)
-	separatorPattern     = regexp.MustCompile(`[._\-\[\]()]+`)
+	tmdbIDPattern                 = regexp.MustCompile(`(?i)\{tmdbid-(\d+)\}`)
+	yearPattern                   = regexp.MustCompile(`(?i)^(.*?)[\s._\-\[(]+((?:19|20)\d{2})[\])]?(?:\D.*)?$`)
+	seasonEpisodePattern          = regexp.MustCompile(`(?i)(?:^|[\s._\-\[])S(\d{1,2})[\s._-]*E(\d{1,4})(?:\D|$)`)
+	xEpisodePattern               = regexp.MustCompile(`(?i)(?:^|\D)(\d{1,2})x(\d{1,4})(?:\D|$)`)
+	episodePattern                = regexp.MustCompile(`(?i)(?:^|[\s._\-\[])E(?:PISODE|P)?[\s._-]*(\d{1,4})(?:\D|$)`)
+	absolutePattern               = regexp.MustCompile(`(?i)(?:^|[\s._\-\[])(\d{1,4})(?:v\d+)?(?:[\s._\-\]]|$)`)
+	seasonPattern                 = regexp.MustCompile(`(?i)^(?:season|s)[\s._-]*(\d{1,2})$`)
+	chineseSeasonPattern          = regexp.MustCompile(`^第([0-9零〇一二两三四五六七八九十]+)季$`)
+	specialsPattern               = regexp.MustCompile(`(?i)^(?:specials?|special episodes?|特别篇|特别季|特典)$`)
+	containedChineseSeasonPattern = regexp.MustCompile(`第\s*([0-9零〇一二两三四五六七八九十]+)\s*季`)
+	containedEnglishSeasonPattern = regexp.MustCompile(`(?i)(?:^|[^a-z0-9])season[\s._-]*(\d{1,3})`)
+	containedShortSeasonPattern   = regexp.MustCompile(`(?i)(?:^|[^a-z0-9])s[\s._-]*(\d{1,3})`)
+	containedSpecialsPattern      = regexp.MustCompile(`(?i)(?:^|[^a-z0-9])(?:specials?|special[\s._-]+episodes?|特别篇|特别季|特典)(?:$|[^a-z0-9])`)
+	releaseTagPattern             = regexp.MustCompile(`(?i)\b(?:2160p|1080p|720p|480p|4k|uhd|hdr|bluray|web-?dl|webrip|hdtv|x26[45]|h26[45]|hevc|avc|aac|dts|flac|10bit|remux)\b`)
+	separatorPattern              = regexp.MustCompile(`[._\-\[\]()]+`)
 )
 
 var videoExtensions = map[string]struct{}{
@@ -33,6 +37,12 @@ type Info struct {
 	Episode    *int
 	TMDBID     *int
 	Confidence int
+}
+
+type SeasonDirectoryResult struct {
+	Status  string
+	Season  *int
+	Markers []string
 }
 
 func IsVideoFile(name string) bool {
@@ -59,7 +69,14 @@ func ParseCandidate(candidateName, representativePath, libraryType string) Info 
 	}
 
 	for _, component := range strings.Split(path.Dir(representativePath), "/") {
-		if season := ParseSeasonNumber(component); season != nil {
+		season := ParseSeasonNumber(component)
+		if season == nil {
+			contained := ParseSeasonDirectoryName(component)
+			if contained.Status == "matched" {
+				season = contained.Season
+			}
+		}
+		if season != nil {
 			result.Season = season
 			break
 		}
@@ -108,6 +125,72 @@ func ParseSeasonNumber(value string) *int {
 		return &zero
 	}
 	return nil
+}
+
+// ParseSeasonDirectoryName ports ostrm's contained season marker semantics.
+// It accepts compound directory names but rejects ambiguous season numbers and
+// does not treat an SxxExx episode marker as a season directory.
+func ParseSeasonDirectoryName(value string) SeasonDirectoryResult {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return SeasonDirectoryResult{Status: "no_match", Markers: []string{}}
+	}
+	seasons := map[int]struct{}{}
+	markers := make([]string, 0)
+	invalid := false
+	collect := func(pattern *regexp.Regexp, chinese, short bool) {
+		for _, indices := range pattern.FindAllStringSubmatchIndex(value, -1) {
+			if len(indices) < 4 {
+				continue
+			}
+			if short {
+				remainder := value[indices[1]:]
+				remainder = strings.TrimLeft(remainder, " ._-")
+				if len(remainder) > 1 && (remainder[0] == 'e' || remainder[0] == 'E') && remainder[1] >= '0' && remainder[1] <= '9' {
+					continue
+				}
+			}
+			marker := strings.TrimSpace(value[indices[0]:indices[1]])
+			markers = append(markers, marker)
+			var number int
+			var ok bool
+			if chinese {
+				number, ok = parseChineseNumber(value[indices[2]:indices[3]])
+			} else {
+				parsed := integerPointer(value[indices[2]:indices[3]])
+				ok = parsed != nil
+				if ok {
+					number = *parsed
+				}
+			}
+			if !ok || number < 0 || number > 99 {
+				invalid = true
+				continue
+			}
+			seasons[number] = struct{}{}
+		}
+	}
+	collect(containedChineseSeasonPattern, true, false)
+	collect(containedEnglishSeasonPattern, false, false)
+	collect(containedShortSeasonPattern, false, true)
+	for _, marker := range containedSpecialsPattern.FindAllString(value, -1) {
+		markers = append(markers, strings.TrimSpace(marker))
+		seasons[0] = struct{}{}
+	}
+	if invalid {
+		return SeasonDirectoryResult{Status: "invalid", Markers: markers}
+	}
+	if len(seasons) == 0 {
+		return SeasonDirectoryResult{Status: "no_match", Markers: markers}
+	}
+	if len(seasons) > 1 {
+		return SeasonDirectoryResult{Status: "ambiguous", Markers: markers}
+	}
+	for number := range seasons {
+		season := number
+		return SeasonDirectoryResult{Status: "matched", Season: &season, Markers: markers}
+	}
+	return SeasonDirectoryResult{Status: "no_match", Markers: markers}
 }
 
 func parseEpisode(fileName string, directorySeason *int, anime bool) (*int, *int) {
