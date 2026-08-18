@@ -1,0 +1,65 @@
+# OpenlistScraper 运维与灰度指南
+
+## 1. 上线前准备
+
+1. 从 `.env.example` 复制 `.env`，生成独立的 `JWT_SECRET` 与 32 字节 `CREDENTIAL_ENCRYPTION_KEY`。加密密钥一旦更换，已有 OpenList Token 和 TMDB Key 将无法解密。
+2. 默认 SQLite 适合单实例部署；不要让多个应用容器同时挂载同一个 SQLite 文件。多实例使用 PostgreSQL。
+3. `/data` 保存业务数据库和作业工作区，`/cache` 保存可清理的 API/应用日志。审计日志位于业务数据库，不随日志保留期删除。
+4. OpenList Token 至少需要目标目录的读取、创建目录、移动、重命名和上传权限。建议使用只覆盖媒体库根目录的专用账号。
+
+关键参数：
+
+| 参数 | 默认值 | 说明 |
+| --- | ---: | --- |
+| `SCRAPE_WORKERS` | 2 | 并发 Worker，允许 1–4；同一 OpenList 连接的写操作仍串行 |
+| `SCRAPE_QUEUE_SIZE` | 100 | 等待与运行作业的有界容量 |
+| `MAX_IMAGE_BYTES` | 20971520 | 单张图片上限，允许 1–100 MiB |
+| `JOB_RETENTION_DAYS` | 7 | 已遗留作业工作区保留天数，作业记录不会自动删除 |
+| `LOG_RETENTION_DAYS` | 7 | API 与应用日志保留天数，允许 1–30 |
+
+## 2. 备份与恢复
+
+执行备份前停止应用，避免复制到不一致的 SQLite/WAL 状态：
+
+```bash
+docker compose stop app
+tar -czf openlistscraper-backup-$(date +%Y%m%d-%H%M%S).tar.gz runtime/data .env
+docker compose start app
+```
+
+恢复时停止应用，把备份中的 `runtime/data` 和原始 `.env`（尤其是加密密钥）恢复到同一路径，再启动应用。不要只恢复数据库而丢弃失败作业仍引用的 `/data/work/jobs`。
+
+PostgreSQL 部署使用 `pg_dump --format=custom` 和 `pg_restore --clean --if-exists`；同时单独备份 `/data/work/jobs` 与 `.env`。恢复后先访问 `/api/health`，再检查作业列表中是否有 `job.interrupted`，这些作业应由管理员确认后从检查点重试。
+
+## 3. 升级与回退
+
+1. 备份业务数据和密钥。
+2. 拉取或构建新镜像，先运行 `docker compose config` 检查配置。
+3. `docker compose up -d --build app`；启动时会按 `schema_migrations` 自动应用版本化迁移。
+4. 检查健康接口、登录、连接测试、日志页和作业页。
+5. 如果升级后需要回退，停止新版本，恢复升级前的数据备份和旧镜像。不要用旧二进制直接打开已经升级且未恢复的数据库。
+
+## 4. 真实 OpenList 小规模灰度
+
+请使用可恢复的测试副本或单独的小型媒体目录，不要第一次就在主媒体库执行。
+
+- 电影：放入一个视频、一个同名字幕；扫描后确认年份、TMDB ID、目录/文件目标和 `movie.nfo`/图片目标都正确。
+- 电视剧：放入两集和一个字幕；确认 `Season 01`、`S01E01/S01E02`、show NFO、分集 NFO 与缩略图路径。
+- 冲突保护：预览完成后手工创建一个目标同名文件，提交应被阻断或执行应以 `job.target_exists` 停止，现有文件不得改变。
+- 断点恢复：在元数据上传阶段停止容器；重启后作业应显示 `job.interrupted`，点击重试后只继续未完成操作。
+- 幂等：使用相同 `Idempotency-Key` 重复提交同一预览，应返回同一作业。
+- 权限与脱敏：用权限不足 Token 验证错误可见但 Token 不出现在 API、应用或审计日志；普通未认证请求必须返回 401。
+- 兼容性：在 Kodi/Jellyfin/Emby 中刷新该测试库，确认电影、剧集标题、简介、季集号和图片可读取。
+
+灰度完成后从页面导出三类日志保存验收记录。任何路径或 TMDB 匹配不符合预期时停止扩大范围，重新扫描并生成新预览；不要复用过期或指纹不一致的预览。
+
+## 5. 故障处理
+
+- `preview.stale`：OpenList 目录在扫描/预览后变化，重新扫描。
+- `job.target_exists`：目标路径已被占用；人工检查后重新规划，应用不会覆盖媒体。
+- `job.interrupted`：进程退出导致；确认 OpenList 当前状态后从作业页重试。
+- `job.queue_full`：等待现有作业结束，或在评估 OpenList 限流后提高队列；提高 Worker 不会绕过单连接串行保护。
+- `job.invalid_image_type` / `job.image_too_large`：检查 TMDB 图片代理响应和 `MAX_IMAGE_BYTES`。
+- SQLite `busy/locked`：确认只有一个应用实例访问文件，存储支持文件锁；需要多实例时迁移到 PostgreSQL。
+
+应用收到 SIGTERM 后会停止接收新 HTTP 请求并等待作业退出，最长 10 秒。尚未安全结束的作业会在下次启动时标记为可重试。

@@ -24,6 +24,10 @@ type TMDBCatalog interface {
 	Detail(ctx context.Context, config tmdb.Config, mediaType string, id int) (*tmdb.Detail, error)
 }
 
+type TMDBSeasonCatalog interface {
+	Season(ctx context.Context, config tmdb.Config, tvID, season int) ([]tmdb.Episode, error)
+}
+
 type PreviewService struct {
 	targets   *repository.TargetRepository
 	catalog   *repository.CatalogRepository
@@ -64,6 +68,13 @@ type PreviewArtifact struct {
 	Content   string `json:"content,omitempty"`
 }
 
+type EpisodeFilePlan struct {
+	SourcePath string `json:"source_path"`
+	TargetPath string `json:"target_path"`
+	Season     int    `json:"season"`
+	Episode    int    `json:"episode"`
+}
+
 type PreviewPlan struct {
 	ReadOnly                 bool              `json:"read_only"`
 	Ready                    bool              `json:"ready"`
@@ -77,6 +88,7 @@ type PreviewPlan struct {
 	ProposedFileRenames      []RenameItem      `json:"proposed_file_renames"`
 	GeneratedFiles           []string          `json:"generated_files"`
 	Artifacts                []PreviewArtifact `json:"artifacts"`
+	EpisodeFiles             []EpisodeFilePlan `json:"episode_files"`
 	Warnings                 []string          `json:"warnings"`
 	Conflicts                []PlanConflict    `json:"conflicts"`
 }
@@ -196,6 +208,13 @@ func (s *PreviewService) Create(ctx context.Context, targetID, actorID uint, req
 		return nil, mapTMDBError(err)
 	}
 	plan := buildFullPreviewPlan(target, candidate, detail, entries, siblings)
+	if candidate.Kind != "movie" {
+		if seasonProvider, ok := s.provider.(TMDBSeasonCatalog); ok {
+			if err := expandEpisodeArtifacts(ctx, seasonProvider, config, detail, &plan); err != nil {
+				return nil, mapTMDBError(err)
+			}
+		}
+	}
 	matchJSON, err := json.Marshal(detail)
 	if err != nil {
 		return nil, Internal("preview.encode_failed", "Failed to encode TMDB preview", err)
@@ -288,6 +307,9 @@ func previewResponse(preview *model.ScrapePreview, match tmdb.Detail, plan Previ
 	}
 	if plan.Artifacts == nil {
 		plan.Artifacts = []PreviewArtifact{}
+	}
+	if plan.EpisodeFiles == nil {
+		plan.EpisodeFiles = []EpisodeFilePlan{}
 	}
 	if plan.Warnings == nil {
 		plan.Warnings = []string{}

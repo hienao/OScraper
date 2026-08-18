@@ -5,7 +5,8 @@ import { Input } from '@appica/ui-react/input'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useState, type FormEvent } from 'react'
 import { useTranslation } from 'react-i18next'
-import { connectionApi, previewApi, targetApi } from '@/api/services'
+import { useNavigate } from 'react-router-dom'
+import { connectionApi, jobApi, previewApi, targetApi } from '@/api/services'
 import type { LibraryType, MediaCandidate, ScanRun, ScrapePreview, ScrapeTarget, TargetInput, TMDBSearchResult } from '@/api/types'
 import { FormField } from '@/components/common/form-field'
 import { Message } from '@/components/common/message'
@@ -17,6 +18,7 @@ const emptyForm: TargetInput = { connection_id: 0, name: '', root_path: '/', lib
 export function TargetsPage() {
   const { t } = useTranslation()
   const queryClient = useQueryClient()
+  const navigate = useNavigate()
   const targets = useQuery({ queryKey: ['targets'], queryFn: targetApi.list })
   const connections = useQuery({ queryKey: ['connections'], queryFn: connectionApi.list })
   const [formOpen, setFormOpen] = useState(false)
@@ -55,6 +57,11 @@ export function TargetsPage() {
     mutationFn: ({ candidate, tmdbId }: { candidate: MediaCandidate; tmdbId?: number }) => previewApi.create(candidate.target_id, { candidate_id: candidate.id, tmdb_id: tmdbId }),
     onSuccess: (result) => setPreview(result),
     onError: (error) => setMatchError(errorMessage(error, t('targets.previewError'))),
+  })
+  const executeJob = useMutation({
+    mutationFn: (value: ScrapePreview) => jobApi.submit(value.target_id, { preview_id: value.id, rename_media: value.plan.proposed_directory_creates.length + value.plan.proposed_directory_renames.length + value.plan.proposed_file_renames.length > 0, confirm_directory_fingerprint: value.fingerprint }, crypto.randomUUID()),
+    onSuccess: () => { setMatchCandidate(null); void navigate('/jobs') },
+    onError: (error) => setMatchError(errorMessage(error, t('targets.executeError'))),
   })
   const tree = useQuery({
     queryKey: ['target-tree', browsing?.id, browserPath],
@@ -101,6 +108,11 @@ export function TargetsPage() {
     setMatchError(null)
     setPreview(null)
     searchTMDB.mutate({ candidate: matchCandidate, title: searchTitle.trim(), year: searchYear ? Number(searchYear) : undefined })
+  }
+
+  function executePreview(value: ScrapePreview) {
+    const renameCount = value.plan.proposed_directory_creates.length + value.plan.proposed_directory_renames.length + value.plan.proposed_file_renames.length
+    if (window.confirm(t('targets.executeConfirm', { renames: renameCount, files: value.plan.artifacts.length }))) executeJob.mutate(value)
   }
 
   async function submit(event: FormEvent) {
@@ -248,11 +260,11 @@ export function TargetsPage() {
                   {preview.plan.proposed_file_renames.length > 0 && <div className="mt-4"><h4 className="text-xs font-semibold uppercase tracking-wide text-neutral-500">{t('targets.fileRenames')}</h4>{preview.plan.proposed_file_renames.map((item) => <div key={`${item.source_path}-${item.target_path}`} className="mt-2 text-xs"><p className="break-all text-neutral-500">{item.source_path}</p><p className="break-all text-emerald-700 dark:text-emerald-300">→ {item.target_path}</p></div>)}</div>}
                   {preview.plan.proposed_directory_creates.length === 0 && preview.plan.proposed_directory_renames.length === 0 && preview.plan.proposed_file_renames.length === 0 && <p className="mt-3 text-sm text-neutral-500">{t('targets.noRenames')}</p>}
                 </div>
-                <div className="rounded-xl border border-neutral-200 p-4 dark:border-neutral-800"><h3 className="font-semibold">{t('targets.generatedFiles')}</h3><ul className="mt-2 space-y-2">{preview.plan.generated_files.map((file) => <li key={file} className="break-all font-mono text-xs text-neutral-600 dark:text-neutral-400">{file}</li>)}</ul>{preview.plan.artifacts.filter((artifact) => artifact.kind === 'nfo' && artifact.content).map((artifact) => <details key={artifact.path} className="mt-4 rounded-lg bg-neutral-50 p-3 dark:bg-neutral-900"><summary className="cursor-pointer text-sm font-medium">{t('targets.nfoPreview')}</summary><pre className="mt-3 max-h-64 overflow-auto whitespace-pre-wrap break-all text-xs text-neutral-600 dark:text-neutral-400">{artifact.content}</pre></details>)}</div>
+                <div className="rounded-xl border border-neutral-200 p-4 dark:border-neutral-800"><h3 className="font-semibold">{t('targets.generatedFiles')}</h3><ul className="mt-2 space-y-2">{preview.plan.generated_files.map((file) => <li key={file} className="break-all font-mono text-xs text-neutral-600 dark:text-neutral-400">{file}</li>)}</ul>{preview.plan.artifacts.filter((artifact) => (artifact.kind === 'nfo' || artifact.kind === 'episode_nfo') && artifact.content).map((artifact) => <details key={artifact.path} className="mt-4 rounded-lg bg-neutral-50 p-3 dark:bg-neutral-900"><summary className="cursor-pointer text-sm font-medium">{t('targets.nfoPreview')}</summary><pre className="mt-3 max-h-64 overflow-auto whitespace-pre-wrap break-all text-xs text-neutral-600 dark:text-neutral-400">{artifact.content}</pre></details>)}</div>
               </div>
               {preview.plan.conflicts.length > 0 && <div className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-900 dark:border-red-900 dark:bg-red-950/40 dark:text-red-200"><h3 className="font-semibold">{t('targets.previewConflicts')}</h3><ul className="mt-2 space-y-2">{preview.plan.conflicts.map((conflict, index) => <li key={`${conflict.code}-${index}`}><p>{t(`targets.conflicts.${conflict.code}`)}</p>{conflict.source_path && <p className="mt-1 break-all font-mono text-xs opacity-75">{conflict.source_path}{conflict.target_path ? ` → ${conflict.target_path}` : ''}</p>}</li>)}</ul></div>}
               {preview.plan.warnings.length > 0 && <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-200"><h3 className="font-semibold">{t('targets.previewWarnings')}</h3><ul className="mt-2 list-disc space-y-1 pl-5">{preview.plan.warnings.map((warning) => <li key={warning}>{t(`targets.warnings.${warning}`)}</li>)}</ul></div>}
-              <div className="flex flex-wrap items-center justify-between gap-3"><p className="text-xs text-neutral-500">{t('targets.previewExpires', { value: new Date(preview.expires_at).toLocaleString() })}</p><Button onClick={() => setMatchCandidate(null)}>{t('common.close')}</Button></div>
+              <div className="flex flex-wrap items-center justify-between gap-3"><p className="text-xs text-neutral-500">{t('targets.previewExpires', { value: new Date(preview.expires_at).toLocaleString() })}</p><div className="flex gap-2"><Button variant="outline" onClick={() => setMatchCandidate(null)}>{t('common.close')}</Button><Button disabled={!preview.plan.ready || executeJob.isPending} onClick={() => executePreview(preview)}>{executeJob.isPending ? t('targets.submittingJob') : t('targets.execute')}</Button></div></div>
             </div>}
           </div>
         </div>

@@ -81,6 +81,10 @@ func TestAuthenticatedConnectionTargetAndScanFlow(t *testing.T) {
 	bootstrapToken := responseToken(t, bootstrap)
 	setup := requestJSON(t, server.URL, http.MethodPost, "/api/auth/setup-admin", bootstrapToken, map[string]any{"username": "owner", "password": "secure-password"}, http.StatusOK)
 	token := responseToken(t, setup)
+	jobs := requestJSON(t, server.URL, http.MethodGet, "/api/scrape-jobs", token, nil, http.StatusOK)
+	if total := responseData(t, jobs)["total"].(float64); total != 0 {
+		t.Fatalf("new database returned scrape jobs: %s", jobs)
+	}
 
 	connection := requestJSON(t, server.URL, http.MethodPost, "/api/openlist-connections", token, map[string]any{
 		"name": "Home", "base_url": openList.URL, "token": "openlist-token", "qps_limit": 5, "qpm_limit": 120,

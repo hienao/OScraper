@@ -17,8 +17,8 @@ FROM alpine:3.22
 ENV APP_ENV=production TZ=UTC APP_DATA_DIR=/data APP_CACHE_DIR=/cache SERVER_PORT=8080
 RUN apk add --no-cache ca-certificates nginx tzdata && \
     addgroup -S app && adduser -S -G app app && \
-    mkdir -p /data/db /data/work/jobs /cache/logs/nginx /cache/logs/app /cache/tmp/client /cache/tmp/proxy /cache/tmp/fastcgi /run/nginx && \
-    chown -R app:app /data /cache /run/nginx
+    mkdir -p /data/db /data/work/jobs /cache/logs/nginx /cache/logs/app /cache/tmp/client /cache/tmp/proxy /cache/tmp/fastcgi /cache/tmp/uwsgi /cache/tmp/scgi /run/nginx /var/lib/nginx/logs && \
+    chown -R app:app /data /cache /run/nginx /var/lib/nginx
 WORKDIR /app
 COPY --from=backend-builder /app/backend/openlistscraper ./openlistscraper
 COPY --from=frontend-builder /app/frontend/dist /usr/share/nginx/html

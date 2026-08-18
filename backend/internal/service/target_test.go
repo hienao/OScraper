@@ -30,7 +30,7 @@ func newTargetTestService(t *testing.T) (*TargetService, *gorm.DB) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := db.AutoMigrate(&model.OpenListConnection{}, &model.ScrapeTarget{}, &model.ScanRun{}, &model.MediaCandidate{}, &model.ScrapePreview{}, &model.AdminAuditLog{}); err != nil {
+	if err := db.AutoMigrate(&model.OpenListConnection{}, &model.ScrapeTarget{}, &model.ScanRun{}, &model.MediaCandidate{}, &model.ScrapePreview{}, &model.ScrapeJob{}, &model.ScrapeJobOperation{}, &model.AdminAuditLog{}); err != nil {
 		t.Fatal(err)
 	}
 	cipher, err := cryptoutil.New("0123456789abcdef0123456789abcdef")

@@ -61,6 +61,11 @@ type directoryResponse struct {
 	} `json:"data"`
 }
 
+type mutationResponse struct {
+	Code    int    `json:"code"`
+	Message string `json:"message"`
+}
+
 type APIError struct {
 	Code    string
 	Message string
@@ -312,4 +317,130 @@ func firstNonBlank(value, fallback string) string {
 		return strings.TrimSpace(value)
 	}
 	return fallback
+}
+
+func (c *Client) CreateDirectory(ctx context.Context, rawBaseURL, token, remotePath string) error {
+	normalized, err := NormalizeRemotePath(remotePath)
+	if err != nil {
+		return err
+	}
+	return c.mutate(ctx, rawBaseURL, token, "/api/fs/mkdir", map[string]any{"path": normalized})
+}
+
+func (c *Client) RenameEntry(ctx context.Context, rawBaseURL, token, sourcePath, newName string) error {
+	normalized, err := NormalizeRemotePath(sourcePath)
+	if err != nil {
+		return err
+	}
+	if !validEntryName(newName) {
+		return &APIError{Code: "openlist.invalid_name", Message: "OpenList target name is invalid"}
+	}
+	return c.mutate(ctx, rawBaseURL, token, "/api/fs/rename", map[string]any{"path": normalized, "name": newName, "overwrite": false})
+}
+
+func (c *Client) MoveEntries(ctx context.Context, rawBaseURL, token, sourceDirectory, targetDirectory string, names []string) error {
+	source, err := NormalizeRemotePath(sourceDirectory)
+	if err != nil {
+		return err
+	}
+	target, err := NormalizeRemotePath(targetDirectory)
+	if err != nil {
+		return err
+	}
+	if len(names) == 0 {
+		return &APIError{Code: "openlist.invalid_move", Message: "OpenList move requires at least one entry"}
+	}
+	for _, name := range names {
+		if !validEntryName(name) {
+			return &APIError{Code: "openlist.invalid_name", Message: "OpenList move entry name is invalid"}
+		}
+	}
+	return c.mutate(ctx, rawBaseURL, token, "/api/fs/move", map[string]any{"src_dir": source, "dst_dir": target, "names": names})
+}
+
+func (c *Client) Upload(ctx context.Context, rawBaseURL, token, remotePath, contentType string, size int64, content io.Reader) error {
+	normalized, err := NormalizeRemotePath(remotePath)
+	if err != nil {
+		return err
+	}
+	endpoint, err := mutationEndpoint(ctx, rawBaseURL, "/api/fs/put")
+	if err != nil {
+		return err
+	}
+	request, err := http.NewRequestWithContext(ctx, http.MethodPut, endpoint.String(), content)
+	if err != nil {
+		return &APIError{Code: "openlist.request_failed", Message: "Failed to create OpenList upload request", Cause: err}
+	}
+	setMutationHeaders(request, token)
+	request.Header.Set("Content-Type", firstNonBlank(contentType, "application/octet-stream"))
+	request.Header.Set("File-Path", strings.ReplaceAll(url.QueryEscape(normalized), "+", "%20"))
+	request.Header.Set("As-Task", "false")
+	request.Header.Set("Overwrite", "true")
+	request.ContentLength = size
+	return c.doMutation(request)
+}
+
+func (c *Client) mutate(ctx context.Context, rawBaseURL, token, route string, input any) error {
+	endpoint, err := mutationEndpoint(ctx, rawBaseURL, route)
+	if err != nil {
+		return err
+	}
+	body, err := json.Marshal(input)
+	if err != nil {
+		return &APIError{Code: "openlist.request_failed", Message: "Failed to encode OpenList mutation", Cause: err}
+	}
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint.String(), strings.NewReader(string(body)))
+	if err != nil {
+		return &APIError{Code: "openlist.request_failed", Message: "Failed to create OpenList mutation request", Cause: err}
+	}
+	setMutationHeaders(request, token)
+	request.Header.Set("Content-Type", "application/json")
+	return c.doMutation(request)
+}
+
+func mutationEndpoint(ctx context.Context, rawBaseURL, route string) (*url.URL, error) {
+	baseURL, err := NormalizeBaseURL(rawBaseURL)
+	if err != nil {
+		return nil, err
+	}
+	endpoint, err := url.Parse(baseURL + route)
+	if err != nil {
+		return nil, &APIError{Code: "openlist.invalid_url", Message: "OpenList URL is invalid", Cause: err}
+	}
+	if err := ValidateEndpoint(ctx, endpoint); err != nil {
+		return nil, err
+	}
+	return endpoint, nil
+}
+
+func setMutationHeaders(request *http.Request, token string) {
+	request.Header.Set("Accept", "application/json")
+	request.Header.Set("Authorization", strings.TrimSpace(token))
+	request.Header.Set("User-Agent", "OpenlistScraper/1.0")
+}
+
+func (c *Client) doMutation(request *http.Request) error {
+	response, err := c.httpClient.Do(request)
+	if err != nil {
+		return &APIError{Code: "openlist.connection_failed", Message: "OpenList mutation request failed", Cause: err}
+	}
+	defer response.Body.Close()
+	body, err := io.ReadAll(io.LimitReader(response.Body, maxResponseBytes))
+	if err != nil {
+		return &APIError{Code: "openlist.invalid_response", Message: "Could not read OpenList mutation response", Cause: err}
+	}
+	if response.StatusCode == http.StatusUnauthorized || response.StatusCode == http.StatusForbidden {
+		return &APIError{Code: "openlist.authentication_failed", Message: "OpenList token is invalid or lacks permission"}
+	}
+	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		return &APIError{Code: "openlist.http_error", Message: fmt.Sprintf("OpenList returned HTTP %d", response.StatusCode)}
+	}
+	var payload mutationResponse
+	if err := json.Unmarshal(body, &payload); err != nil {
+		return &APIError{Code: "openlist.invalid_response", Message: "OpenList returned invalid mutation JSON", Cause: err}
+	}
+	if payload.Code != 200 {
+		return &APIError{Code: "openlist.api_error", Message: firstNonBlank(payload.Message, "OpenList rejected the mutation")}
+	}
+	return nil
 }

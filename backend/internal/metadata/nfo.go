@@ -47,6 +47,21 @@ type tvShow struct {
 	Episodes  int    `xml:"episode,omitempty"`
 }
 
+type episodeDetails struct {
+	XMLName   xml.Name `xml:"episodedetails"`
+	Title     string   `xml:"title"`
+	ShowTitle string   `xml:"showtitle"`
+	Season    int      `xml:"season"`
+	Episode   int      `xml:"episode"`
+	Plot      string   `xml:"plot,omitempty"`
+	Aired     string   `xml:"aired,omitempty"`
+	Runtime   int      `xml:"runtime,omitempty"`
+	Rating    *rating  `xml:"rating,omitempty"`
+	Thumb     string   `xml:"thumb,omitempty"`
+	TMDBID    int      `xml:"tmdbid"`
+	DateAdded string   `xml:"dateadded"`
+}
+
 // BuildNFO creates a Kodi/Jellyfin/Emby-compatible UTF-8 metadata document.
 func BuildNFO(detail *tmdb.Detail, generatedAt time.Time) string {
 	base := common{
@@ -63,6 +78,22 @@ func BuildNFO(detail *tmdb.Detail, generatedAt time.Time) string {
 		document = tvShow{common: base, Premiered: detail.ReleaseDate, Seasons: detail.NumberOfSeasons, Episodes: detail.NumberOfEpisodes}
 	} else {
 		document = movie{common: base, Tagline: detail.Tagline, ReleaseDate: detail.ReleaseDate, IMDBID: detail.IMDBID}
+	}
+	encoded, err := xml.MarshalIndent(document, "", "  ")
+	if err != nil {
+		return ""
+	}
+	return fmt.Sprintf("<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n%s\n", encoded)
+}
+
+func BuildEpisodeNFO(showTitle string, episode tmdb.Episode, generatedAt time.Time) string {
+	document := episodeDetails{
+		Title: episode.Name, ShowTitle: showTitle, Season: episode.SeasonNumber, Episode: episode.EpisodeNumber,
+		Plot: episode.Overview, Aired: episode.AirDate, Runtime: episode.Runtime, Thumb: episode.StillURL,
+		TMDBID: episode.ID, DateAdded: generatedAt.UTC().Format("2006-01-02 15:04:05"),
+	}
+	if episode.VoteAverage > 0 || episode.VoteCount > 0 {
+		document.Rating = &rating{Value: episode.VoteAverage, Votes: episode.VoteCount}
 	}
 	encoded, err := xml.MarshalIndent(document, "", "  ")
 	if err != nil {

@@ -69,6 +69,19 @@ type Detail struct {
 	Studios          []string `json:"studios"`
 }
 
+type Episode struct {
+	ID            int     `json:"id"`
+	Name          string  `json:"name"`
+	Overview      string  `json:"overview"`
+	AirDate       string  `json:"air_date,omitempty"`
+	SeasonNumber  int     `json:"season_number"`
+	EpisodeNumber int     `json:"episode_number"`
+	Runtime       int     `json:"runtime,omitempty"`
+	VoteAverage   float64 `json:"vote_average"`
+	VoteCount     int     `json:"vote_count"`
+	StillURL      string  `json:"still_url,omitempty"`
+}
+
 type Error struct {
 	Code    string
 	Message string
@@ -164,6 +177,46 @@ func (c *Client) Detail(ctx context.Context, config Config, mediaType string, id
 		NumberOfSeasons: item.NumberOfSeasons, NumberOfEpisodes: item.NumberOfEpisodes, OriginalLanguage: item.OriginalLanguage,
 		Tagline: item.Tagline, Status: item.Status, IMDBID: item.IMDBID, Country: detailCountry(item, endpointType), Studios: detailStudios(item, endpointType),
 	}, nil
+}
+
+func (c *Client) Season(ctx context.Context, config Config, tvID, season int) ([]Episode, error) {
+	if tvID <= 0 || season < 0 {
+		return nil, &Error{Code: "tmdb.invalid_id", Message: "TMDB TV and season IDs are invalid"}
+	}
+	body, err := c.get(ctx, config, "/tv/"+strconv.Itoa(tvID)+"/season/"+strconv.Itoa(season), nil)
+	if err != nil {
+		return nil, err
+	}
+	var payload struct {
+		Episodes []struct {
+			ID            int     `json:"id"`
+			Name          string  `json:"name"`
+			Overview      string  `json:"overview"`
+			AirDate       string  `json:"air_date"`
+			SeasonNumber  int     `json:"season_number"`
+			EpisodeNumber int     `json:"episode_number"`
+			Runtime       int     `json:"runtime"`
+			VoteAverage   float64 `json:"vote_average"`
+			VoteCount     int     `json:"vote_count"`
+			StillPath     string  `json:"still_path"`
+		} `json:"episodes"`
+	}
+	if err := json.Unmarshal(body, &payload); err != nil {
+		return nil, &Error{Code: "tmdb.invalid_response", Message: "TMDB returned invalid season details", Cause: err}
+	}
+	result := make([]Episode, 0, len(payload.Episodes))
+	for _, episode := range payload.Episodes {
+		if episode.ID <= 0 || episode.EpisodeNumber <= 0 {
+			continue
+		}
+		result = append(result, Episode{
+			ID: episode.ID, Name: episode.Name, Overview: episode.Overview, AirDate: episode.AirDate,
+			SeasonNumber: episode.SeasonNumber, EpisodeNumber: episode.EpisodeNumber, Runtime: episode.Runtime,
+			VoteAverage: episode.VoteAverage, VoteCount: episode.VoteCount,
+			StillURL: imageURL(config, episode.StillPath, config.BackdropSize),
+		})
+	}
+	return result, nil
 }
 
 func (c *Client) get(ctx context.Context, config Config, endpoint string, parameters url.Values) ([]byte, error) {

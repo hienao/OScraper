@@ -27,6 +27,9 @@ func NotFound(code, message string) *Error {
 func Conflict(code, message string) *Error {
 	return &Error{Status: http.StatusConflict, Code: code, Message: message}
 }
+func TooManyRequests(code, message string) *Error {
+	return &Error{Status: http.StatusTooManyRequests, Code: code, Message: message}
+}
 func Internal(code, message string, cause error) *Error {
 	return &Error{Status: http.StatusInternalServerError, Code: code, Message: message, Cause: cause}
 }

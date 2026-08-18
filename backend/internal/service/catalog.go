@@ -36,8 +36,7 @@ type CatalogService struct {
 	client      DirectoryBrowser
 	activeMu    sync.Mutex
 	active      map[uint]struct{}
-	limitMu     sync.Mutex
-	requestLog  map[uint][]time.Time
+	quota       *ConnectionQuota
 }
 
 type ScanResponse struct {
@@ -64,13 +63,16 @@ type CandidateInspection struct {
 	Stale       bool
 }
 
-func NewCatalogService(db *gorm.DB, cipher *cryptoutil.Cipher, client DirectoryBrowser) *CatalogService {
-	return &CatalogService{
+func NewCatalogService(db *gorm.DB, cipher *cryptoutil.Cipher, client DirectoryBrowser, quotas ...*ConnectionQuota) *CatalogService {
+	service := &CatalogService{
 		targets: repository.NewTargetRepository(db), connections: repository.NewConnectionRepository(db),
 		catalog: repository.NewCatalogRepository(db), audit: repository.NewAuditRepository(db), cipher: cipher, client: client,
-		active:     make(map[uint]struct{}),
-		requestLog: make(map[uint][]time.Time),
+		active: make(map[uint]struct{}), quota: NewConnectionQuota(),
 	}
+	if len(quotas) > 0 && quotas[0] != nil {
+		service.quota = quotas[0]
+	}
+	return service
 }
 
 func (s *CatalogService) Scan(ctx context.Context, targetID, actorID uint, refresh bool) (*ScanResponse, error) {
@@ -308,59 +310,7 @@ func (s *CatalogService) listDirectory(ctx context.Context, connection *model.Op
 // The registry is shared by all scans in this process, so concurrent targets
 // using the same OpenList connection consume the same allowance.
 func (s *CatalogService) waitForReadQuota(ctx context.Context, connection *model.OpenListConnection) error {
-	if connection.QPSLimit <= 0 && connection.QPMLimit <= 0 {
-		return nil
-	}
-	for {
-		now := time.Now()
-		s.limitMu.Lock()
-		history := s.requestLog[connection.ID]
-		minuteCutoff := now.Add(-time.Minute)
-		firstCurrent := 0
-		for firstCurrent < len(history) && history[firstCurrent].Before(minuteCutoff) {
-			firstCurrent++
-		}
-		history = history[firstCurrent:]
-		secondCutoff := now.Add(-time.Second)
-		secondCount := 0
-		var oldestSecond time.Time
-		for _, requestTime := range history {
-			if !requestTime.Before(secondCutoff) {
-				if secondCount == 0 {
-					oldestSecond = requestTime
-				}
-				secondCount++
-			}
-		}
-		qpsReady := connection.QPSLimit <= 0 || secondCount < connection.QPSLimit
-		qpmReady := connection.QPMLimit <= 0 || len(history) < connection.QPMLimit
-		if qpsReady && qpmReady {
-			s.requestLog[connection.ID] = append(history, now)
-			s.limitMu.Unlock()
-			return nil
-		}
-		waitUntil := now.Add(time.Millisecond)
-		if !qpsReady {
-			waitUntil = oldestSecond.Add(time.Second)
-		}
-		if !qpmReady {
-			minuteReady := history[0].Add(time.Minute)
-			if minuteReady.After(waitUntil) {
-				waitUntil = minuteReady
-			}
-		}
-		s.requestLog[connection.ID] = history
-		s.limitMu.Unlock()
-		timer := time.NewTimer(time.Until(waitUntil))
-		select {
-		case <-ctx.Done():
-			if !timer.Stop() {
-				<-timer.C
-			}
-			return ctx.Err()
-		case <-timer.C:
-		}
-	}
+	return s.quota.Wait(ctx, connection)
 }
 
 func makeCandidate(candidatePath, kind string, info media.Info, representative string, videoCount int, entries []openlist.DirectoryEntry) model.MediaCandidate {

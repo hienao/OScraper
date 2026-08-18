@@ -32,6 +32,12 @@ type Config struct {
 	APILogQueueSize         int
 	APILogBatchSize         int
 	HTTPTimeoutSeconds      int
+	ScrapeWorkers           int
+	ScrapeQueueSize         int
+	JobWorkDir              string
+	MaxImageBytes           int64
+	JobRetentionDays        int
+	LogRetentionDays        int
 }
 
 func Load() *Config {
@@ -59,6 +65,12 @@ func Load() *Config {
 		APILogQueueSize:         getEnvInt("API_LOG_QUEUE_SIZE", 5000),
 		APILogBatchSize:         getEnvInt("API_LOG_BATCH_SIZE", 100),
 		HTTPTimeoutSeconds:      getEnvInt("HTTP_TIMEOUT_SECONDS", 20),
+		ScrapeWorkers:           getEnvInt("SCRAPE_WORKERS", 2),
+		ScrapeQueueSize:         getEnvInt("SCRAPE_QUEUE_SIZE", 100),
+		JobWorkDir:              getEnv("JOB_WORK_DIR", filepath.Join(dataDir, "work", "jobs")),
+		MaxImageBytes:           int64(getEnvInt("MAX_IMAGE_BYTES", 20<<20)),
+		JobRetentionDays:        getEnvInt("JOB_RETENTION_DAYS", 7),
+		LogRetentionDays:        getEnvInt("LOG_RETENTION_DAYS", 7),
 	}
 }
 
@@ -75,6 +87,21 @@ func (c *Config) Validate() error {
 	}
 	if c.AccessTokenHours < 1 || c.AccessTokenHours > 168 {
 		return &ValidationError{Message: "ACCESS_TOKEN_HOURS must be between 1 and 168"}
+	}
+	if c.ScrapeWorkers < 1 || c.ScrapeWorkers > 4 {
+		return &ValidationError{Message: "SCRAPE_WORKERS must be between 1 and 4"}
+	}
+	if c.ScrapeQueueSize < 1 || c.ScrapeQueueSize > 10000 {
+		return &ValidationError{Message: "SCRAPE_QUEUE_SIZE must be between 1 and 10000"}
+	}
+	if c.MaxImageBytes < 1<<20 || c.MaxImageBytes > 100<<20 {
+		return &ValidationError{Message: "MAX_IMAGE_BYTES must be between 1 MiB and 100 MiB"}
+	}
+	if c.JobRetentionDays < 1 || c.JobRetentionDays > 30 {
+		return &ValidationError{Message: "JOB_RETENTION_DAYS must be between 1 and 30"}
+	}
+	if c.LogRetentionDays < 1 || c.LogRetentionDays > 30 {
+		return &ValidationError{Message: "LOG_RETENTION_DAYS must be between 1 and 30"}
 	}
 	return nil
 }

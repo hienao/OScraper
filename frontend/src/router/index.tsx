@@ -7,6 +7,7 @@ const ConnectionsPage = lazy(() => import('@/pages/connections-page').then((modu
 const DashboardPage = lazy(() => import('@/pages/dashboard-page').then((module) => ({ default: module.DashboardPage })))
 const LoginPage = lazy(() => import('@/pages/login-page').then((module) => ({ default: module.LoginPage })))
 const LogsPage = lazy(() => import('@/pages/logs-page').then((module) => ({ default: module.LogsPage })))
+const JobsPage = lazy(() => import('@/pages/jobs-page').then((module) => ({ default: module.JobsPage })))
 const ProfilePage = lazy(() => import('@/pages/profile-page').then((module) => ({ default: module.ProfilePage })))
 const TargetsPage = lazy(() => import('@/pages/targets-page').then((module) => ({ default: module.TargetsPage })))
 const SettingsPage = lazy(() => import('@/pages/settings-page').then((module) => ({ default: module.SettingsPage })))
@@ -22,6 +23,7 @@ export const router = createBrowserRouter([
           { index: true, element: <DashboardPage /> },
           { path: 'connections', element: <ConnectionsPage /> },
           { path: 'targets', element: <TargetsPage /> },
+          { path: 'jobs', element: <JobsPage /> },
           { path: 'settings', element: <SettingsPage /> },
           { path: 'logs', element: <LogsPage /> },
           { path: 'profile', element: <ProfilePage /> },

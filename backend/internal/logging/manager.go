@@ -48,6 +48,17 @@ func NewManager(cfg *config.Config) (*Manager, error) {
 	if err := db.AutoMigrate(&model.APIRequestLog{}, &model.ApplicationLog{}); err != nil {
 		return nil, err
 	}
+	retentionDays := cfg.LogRetentionDays
+	if retentionDays <= 0 {
+		retentionDays = 7
+	}
+	cutoff := time.Now().UTC().AddDate(0, 0, -retentionDays)
+	if err := db.Where("occurred_at < ?", cutoff).Delete(&model.APIRequestLog{}).Error; err != nil {
+		return nil, err
+	}
+	if err := db.Where("occurred_at < ?", cutoff).Delete(&model.ApplicationLog{}).Error; err != nil {
+		return nil, err
+	}
 	queueSize := cfg.APILogQueueSize
 	if queueSize < 100 {
 		queueSize = 100

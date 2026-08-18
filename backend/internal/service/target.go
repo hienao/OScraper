@@ -23,6 +23,7 @@ type TargetService struct {
 	targets     *repository.TargetRepository
 	connections *repository.ConnectionRepository
 	audit       *repository.AuditRepository
+	jobs        *repository.JobRepository
 	cipher      *cryptoutil.Cipher
 	client      DirectoryBrowser
 }
@@ -67,7 +68,7 @@ type DirectoryLevel struct {
 func NewTargetService(db *gorm.DB, cipher *cryptoutil.Cipher, client DirectoryBrowser) *TargetService {
 	return &TargetService{
 		targets: repository.NewTargetRepository(db), connections: repository.NewConnectionRepository(db),
-		audit: repository.NewAuditRepository(db), cipher: cipher, client: client,
+		audit: repository.NewAuditRepository(db), jobs: repository.NewJobRepository(db), cipher: cipher, client: client,
 	}
 }
 
@@ -122,6 +123,9 @@ func (s *TargetService) Update(ctx context.Context, id, actorID uint, request Ta
 	if err != nil {
 		return nil, err
 	}
+	if err := s.requireIdle(id); err != nil {
+		return nil, err
+	}
 	connection, rootPath, err := s.validate(ctx, request)
 	if err != nil {
 		return nil, err
@@ -145,10 +149,24 @@ func (s *TargetService) Delete(id, actorID uint) error {
 	if err != nil {
 		return err
 	}
+	if err := s.requireIdle(id); err != nil {
+		return err
+	}
 	if err := s.targets.DeleteWithCatalog(target); err != nil {
 		return Internal("target.delete_failed", "Failed to delete scrape target", err)
 	}
 	s.recordAudit(actorID, "target.delete", target)
+	return nil
+}
+
+func (s *TargetService) requireIdle(id uint) error {
+	count, err := s.jobs.ActiveCount(id, 0)
+	if err != nil {
+		return Internal("target.job_check_failed", "Failed to check active scrape jobs", err)
+	}
+	if count > 0 {
+		return Conflict("target.job_active", "Wait for active scrape jobs before changing this target")
+	}
 	return nil
 }
 

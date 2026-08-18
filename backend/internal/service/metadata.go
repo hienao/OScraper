@@ -1,7 +1,9 @@
 package service
 
 import (
+	"context"
 	"path"
+	"strings"
 	"time"
 
 	"openlistscraper/internal/metadata"
@@ -30,3 +32,43 @@ func buildMetadataArtifacts(detail *tmdb.Detail, finalRoot, standardName string,
 	}
 	return artifacts
 }
+
+func expandEpisodeArtifacts(ctx context.Context, provider TMDBSeasonCatalog, config tmdb.Config, detail *tmdb.Detail, plan *PreviewPlan) error {
+	seasons := make(map[int]struct{})
+	for _, file := range plan.EpisodeFiles {
+		seasons[file.Season] = struct{}{}
+	}
+	episodes := make(map[[2]int]tmdb.Episode)
+	for season := range seasons {
+		items, err := provider.Season(ctx, config, detail.ID, season)
+		if err != nil {
+			return err
+		}
+		for _, episode := range items {
+			episodes[[2]int{episode.SeasonNumber, episode.EpisodeNumber}] = episode
+		}
+	}
+	generatedAt := time.Now().UTC()
+	for _, file := range plan.EpisodeFiles {
+		episode, found := episodes[[2]int{file.Season, file.Episode}]
+		if !found {
+			plan.Conflicts = append(plan.Conflicts, PlanConflict{Code: "episode_metadata_missing", SourcePath: file.SourcePath, TargetPath: file.TargetPath})
+			continue
+		}
+		base := strings.TrimSuffix(file.TargetPath, path.Ext(file.TargetPath))
+		nfo := PreviewArtifact{Path: base + ".nfo", Kind: "episode_nfo", Content: metadata.BuildEpisodeNFO(detail.Title, episode, generatedAt)}
+		plan.Artifacts = append(plan.Artifacts, nfo)
+		plan.GeneratedFiles = append(plan.GeneratedFiles, nfo.Path)
+		if episode.StillURL != "" {
+			thumb := PreviewArtifact{Path: base + "-thumb.jpg", Kind: "episode_thumb", SourceURL: episode.StillURL}
+			plan.Artifacts = append(plan.Artifacts, thumb)
+			plan.GeneratedFiles = append(plan.GeneratedFiles, thumb.Path)
+		}
+	}
+	if len(plan.Conflicts) > 0 {
+		plan.Ready = false
+	}
+	return nil
+}
+
+func isNFOArtifact(kind string) bool { return kind == "nfo" || strings.HasSuffix(kind, "_nfo") }

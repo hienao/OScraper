@@ -35,6 +35,8 @@ func TestAnimeUsesTVEndpointAndDetail(t *testing.T) {
 			_, _ = writer.Write([]byte(`{"results":[]}`))
 		case "/3/tv/209867":
 			_, _ = writer.Write([]byte(`{"id":209867,"name":"Frieren","original_name":"葬送のフリーレン","first_air_date":"2023-09-29","number_of_seasons":2,"number_of_episodes":32,"episode_run_time":[24,26],"genres":[{"id":16,"name":"Animation"}],"networks":[{"name":"Nippon TV"}],"origin_country":["JP"]}`))
+		case "/3/tv/209867/season/1":
+			_, _ = writer.Write([]byte(`{"episodes":[{"id":1,"name":"The Journey's End","air_date":"2023-09-29","season_number":1,"episode_number":1,"runtime":25,"still_path":"/e1.jpg"}]}`))
 		default:
 			t.Fatalf("unexpected endpoint: %s", request.URL.Path)
 		}
@@ -50,6 +52,10 @@ func TestAnimeUsesTVEndpointAndDetail(t *testing.T) {
 	}
 	if detail.MediaType != "tv" || detail.Year != 2023 || detail.NumberOfEpisodes != 32 || detail.Runtime != 25 || detail.Country != "JP" || len(detail.Studios) != 1 {
 		t.Fatalf("unexpected detail: %#v", detail)
+	}
+	episodes, err := NewClient().Season(context.Background(), config, 209867, 1)
+	if err != nil || len(episodes) != 1 || episodes[0].EpisodeNumber != 1 || episodes[0].StillURL == "" {
+		t.Fatalf("unexpected season: %#v %v", episodes, err)
 	}
 }
 

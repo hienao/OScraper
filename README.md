@@ -1,6 +1,6 @@
 # OpenlistScraper
 
-A focused web application for scraping media directories stored in OpenList. The application uses a Go/Gin API and a React/TypeScript web interface, following the architecture and interaction conventions of Seshat.
+A focused web application for scraping media directories stored in OpenList. The application uses a Go/Gin API and a React/TypeScript web interface, following the architecture and interaction conventions of Seshat and porting the safe, manually triggered OpenList scraping flow from ostrm.
 
 The current development slice includes:
 
@@ -16,13 +16,16 @@ The current development slice includes:
 - ostrm-compatible movie/TV search, exact-year preference, and precise TMDB ID lookup;
 - immutable 24-hour scrape previews containing the scan fingerprint, match snapshot, complete rename plan, and metadata artifacts;
 - fresh OpenList conflict/staleness checks for movie, season, episode, subtitle, image, and NFO paths;
-- Kodi/Jellyfin/Emby-compatible movie and TV NFO XML previews with escaped TMDB metadata and available image download sources;
+- Kodi/Jellyfin/Emby-compatible movie, TV show, and episode NFO XML with TMDB artwork;
+- persistent bounded scrape workers, per-operation checkpoints, idempotent submission, retry, and graceful shutdown recovery;
+- overwrite-safe OpenList directory creation, move, rename, metadata upload, and final-path verification;
+- searchable scrape history and operation detail, plus searchable and CSV-exportable API/application/audit logs;
 - API, application, and administrator audit logs;
 - a bilingual, responsive light/dark web interface;
 - SQLite by default with optional PostgreSQL support;
 - a single Docker image served on port `3113`.
 
-OpenList metadata upload, per-episode TMDB metadata, and recoverable scrape jobs are the next implementation milestones. See the [complete design](docs/design.md).
+The first release workflow is implemented end to end. See the [complete design](docs/design.md) and [operations guide](docs/operations.md).
 
 ## Local development
 
@@ -45,6 +48,8 @@ Open <http://localhost:5173>. On a new database, sign in with `admin/admin` and 
 
 Development data is written below `backend/runtime`. Override `APP_DATA_DIR`, `APP_CACHE_DIR`, or `SERVER_PORT` when needed.
 
+The UI workflow is: create an OpenList connection → create a constrained scrape target → scan → select/correct the TMDB match → inspect the immutable plan → confirm execution → monitor the persistent job.
+
 ## Docker
 
 ```bash
@@ -55,10 +60,13 @@ docker compose up -d --build
 
 Open <http://localhost:3113>. Persistent application data is mounted at `./runtime/data`; logs are mounted at `./runtime/cache`.
 
+Before upgrading or testing against real media, follow the backup and small-library gray-release procedure in [docs/operations.md](docs/operations.md).
+
 ## Verification
 
 ```bash
 (cd backend && go test ./...)
+(cd backend && go test -race ./...)
 (cd frontend && npm test && npm run build)
 docker compose --env-file .env.example config
 ```

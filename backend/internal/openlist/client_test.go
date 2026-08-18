@@ -2,12 +2,51 @@ package openlist
 
 import (
 	"context"
+	"encoding/json"
+	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 )
+
+func TestMutationEndpointsUseNonOverwritingMediaOperationsAndMetadataOverwrite(t *testing.T) {
+	requests := make([]*http.Request, 0)
+	bodies := make([][]byte, 0)
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		body, _ := io.ReadAll(request.Body)
+		requests = append(requests, request.Clone(context.Background()))
+		bodies = append(bodies, body)
+		writer.Header().Set("Content-Type", "application/json")
+		_, _ = writer.Write([]byte(`{"code":200,"message":"success"}`))
+	}))
+	defer server.Close()
+	client := NewClient(time.Second)
+	if err := client.CreateDirectory(context.Background(), server.URL, "token", "/movies/New"); err != nil {
+		t.Fatal(err)
+	}
+	if err := client.RenameEntry(context.Background(), server.URL, "token", "/movies/Old.mkv", "New.mkv"); err != nil {
+		t.Fatal(err)
+	}
+	if err := client.MoveEntries(context.Background(), server.URL, "token", "/movies", "/movies/New", []string{"New.mkv"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := client.Upload(context.Background(), server.URL, "token", "/电影/海报 poster.jpg", "image/jpeg", 4, strings.NewReader("data")); err != nil {
+		t.Fatal(err)
+	}
+	if len(requests) != 4 || requests[0].URL.Path != "/api/fs/mkdir" || requests[1].URL.Path != "/api/fs/rename" || requests[2].URL.Path != "/api/fs/move" || requests[3].URL.Path != "/api/fs/put" {
+		t.Fatalf("unexpected mutation requests: %#v", requests)
+	}
+	var rename map[string]any
+	if err := json.Unmarshal(bodies[1], &rename); err != nil || rename["overwrite"] != false {
+		t.Fatalf("rename did not disable overwrite: %s", bodies[1])
+	}
+	if requests[3].Header.Get("File-Path") != "%2F%E7%94%B5%E5%BD%B1%2F%E6%B5%B7%E6%8A%A5%20poster.jpg" || requests[3].Header.Get("Overwrite") != "true" || string(bodies[3]) != "data" {
+		t.Fatalf("unexpected upload: headers=%v body=%q", requests[3].Header, bodies[3])
+	}
+}
 
 func TestConnectionReadsIdentityAndAuthorization(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {

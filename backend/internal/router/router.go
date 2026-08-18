@@ -19,6 +19,11 @@ import (
 )
 
 func Setup(cfg *config.Config, db *gorm.DB, logManager *logging.Manager, credentialCipher *cryptoutil.Cipher) *gin.Engine {
+	router, _ := SetupWithLifecycle(cfg, db, logManager, credentialCipher)
+	return router
+}
+
+func SetupWithLifecycle(cfg *config.Config, db *gorm.DB, logManager *logging.Manager, credentialCipher *cryptoutil.Cipher) (*gin.Engine, *service.JobService) {
 	gin.SetMode(cfg.GinMode)
 	router := gin.New()
 	router.Use(logging.RequestIDMiddleware(), logging.AccessLogMiddleware(logManager), gin.Recovery(), corsMiddleware())
@@ -28,12 +33,17 @@ func Setup(cfg *config.Config, db *gorm.DB, logManager *logging.Manager, credent
 		panic("failed to initialize bootstrap administrator: " + err.Error())
 	}
 	openListClient := openlist.NewClient(time.Duration(cfg.HTTPTimeoutSeconds) * time.Second)
+	quota := service.NewConnectionQuota()
 	connectionService := service.NewConnectionService(db, credentialCipher, openListClient)
 	targetService := service.NewTargetService(db, credentialCipher, openListClient)
-	catalogService := service.NewCatalogService(db, credentialCipher, openListClient)
+	catalogService := service.NewCatalogService(db, credentialCipher, openListClient, quota)
 	tmdbClient := tmdb.NewClient()
 	settingService := service.NewSettingService(db, credentialCipher, tmdbClient)
 	previewService := service.NewPreviewService(db, settingService, tmdbClient, catalogService)
+	jobService, err := service.NewJobService(db, cfg, credentialCipher, openListClient, catalogService, quota)
+	if err != nil {
+		panic("failed to initialize scrape jobs: " + err.Error())
+	}
 
 	authHandler := handler.NewAuthHandler(authService)
 	connectionHandler := handler.NewConnectionHandler(connectionService)
@@ -41,6 +51,7 @@ func Setup(cfg *config.Config, db *gorm.DB, logManager *logging.Manager, credent
 	catalogHandler := handler.NewCatalogHandler(catalogService)
 	settingHandler := handler.NewSettingHandler(settingService)
 	previewHandler := handler.NewPreviewHandler(previewService)
+	jobHandler := handler.NewJobHandler(jobService)
 	logHandler := handler.NewLogHandler(logManager, db)
 
 	router.GET("/api/health", func(c *gin.Context) {
@@ -90,6 +101,16 @@ func Setup(cfg *config.Config, db *gorm.DB, logManager *logging.Manager, credent
 			targets.POST("/:id/previews/search", previewHandler.Search)
 			targets.POST("/:id/previews/tmdb", previewHandler.Create)
 			targets.GET("/:id/previews/:previewId", previewHandler.Get)
+			targets.POST("/:id/jobs", jobHandler.Submit)
+		}
+
+		jobs := api.Group("/scrape-jobs", middleware.JWTAuth(cfg, db), middleware.AdminSetupComplete(), middleware.AdminOnly())
+		{
+			jobs.GET("", jobHandler.List)
+			jobs.GET("/:id", jobHandler.Get)
+			jobs.GET("/:id/operations", jobHandler.Operations)
+			jobs.POST("/:id/retry", jobHandler.Retry)
+			jobs.POST("/:id/cancel", jobHandler.Cancel)
 		}
 
 		settings := api.Group("/settings", middleware.JWTAuth(cfg, db), middleware.AdminSetupComplete(), middleware.AdminOnly())
@@ -110,7 +131,7 @@ func Setup(cfg *config.Config, db *gorm.DB, logManager *logging.Manager, credent
 	router.NoRoute(func(c *gin.Context) {
 		response.Error(c, http.StatusNotFound, "http.not_found", "Route not found")
 	})
-	return router
+	return router, jobService
 }
 
 func corsMiddleware() gin.HandlerFunc {
@@ -118,7 +139,7 @@ func corsMiddleware() gin.HandlerFunc {
 		if c.GetHeader("Origin") != "" {
 			c.Header("Access-Control-Allow-Origin", "*")
 		}
-		c.Header("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Request-ID")
+		c.Header("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Request-ID, Idempotency-Key")
 		c.Header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
 		if c.Request.Method == http.MethodOptions {
 			c.AbortWithStatus(http.StatusNoContent)

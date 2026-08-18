@@ -23,6 +23,7 @@ type ConnectionService struct {
 	repo    *repository.ConnectionRepository
 	targets *repository.TargetRepository
 	audit   *repository.AuditRepository
+	jobs    *repository.JobRepository
 	cipher  *cryptoutil.Cipher
 	client  OpenListTester
 }
@@ -77,7 +78,7 @@ type ConnectionTestResponse struct {
 
 func NewConnectionService(db *gorm.DB, cipher *cryptoutil.Cipher, client OpenListTester) *ConnectionService {
 	return &ConnectionService{
-		repo: repository.NewConnectionRepository(db), targets: repository.NewTargetRepository(db), audit: repository.NewAuditRepository(db), cipher: cipher, client: client,
+		repo: repository.NewConnectionRepository(db), targets: repository.NewTargetRepository(db), audit: repository.NewAuditRepository(db), jobs: repository.NewJobRepository(db), cipher: cipher, client: client,
 	}
 }
 
@@ -143,6 +144,9 @@ func (s *ConnectionService) Update(id, actorID uint, request ConnectionUpdateReq
 	if err != nil {
 		return nil, err
 	}
+	if err := s.requireIdle(id); err != nil {
+		return nil, err
+	}
 	baseURL, err := openlist.NormalizeBaseURL(request.BaseURL)
 	if err != nil {
 		return nil, mapOpenListError(err)
@@ -192,6 +196,9 @@ func (s *ConnectionService) RotateToken(ctx context.Context, id, actorID uint, r
 	if err != nil {
 		return nil, err
 	}
+	if err := s.requireIdle(id); err != nil {
+		return nil, err
+	}
 	token := strings.TrimSpace(request.Token)
 	identity, err := s.client.TestConnection(ctx, connection.BaseURL, token)
 	if err != nil {
@@ -220,6 +227,9 @@ func (s *ConnectionService) Delete(id, actorID uint) error {
 	if err != nil {
 		return err
 	}
+	if err := s.requireIdle(id); err != nil {
+		return err
+	}
 	targetCount, err := s.targets.CountByConnection(id)
 	if err != nil {
 		return Internal("connection.target_check_failed", "Failed to check connection usage", err)
@@ -231,6 +241,17 @@ func (s *ConnectionService) Delete(id, actorID uint) error {
 		return Internal("connection.delete_failed", "Failed to delete OpenList connection", err)
 	}
 	s.recordAudit(actorID, "connection.delete", connection, nil)
+	return nil
+}
+
+func (s *ConnectionService) requireIdle(id uint) error {
+	count, err := s.jobs.ActiveByConnection(id)
+	if err != nil {
+		return Internal("connection.job_check_failed", "Failed to check active scrape jobs", err)
+	}
+	if count > 0 {
+		return Conflict("connection.job_active", "Wait for active scrape jobs before changing this connection")
+	}
 	return nil
 }
 

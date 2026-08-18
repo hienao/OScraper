@@ -28,3 +28,10 @@ func TestMovieNFOIsEscapedAndKodiCompatible(t *testing.T) {
 		t.Fatalf("NFO is not valid XML: %#v %v", parsed, err)
 	}
 }
+
+func TestEpisodeNFOContainsSeasonEpisodeAndShow(t *testing.T) {
+	content := BuildEpisodeNFO("Show", tmdb.Episode{ID: 99, Name: "Pilot", SeasonNumber: 1, EpisodeNumber: 2, Overview: "Plot"}, time.Now())
+	if !strings.Contains(content, "<episodedetails>") || !strings.Contains(content, "<showtitle>Show</showtitle>") || !strings.Contains(content, "<episode>2</episode>") {
+		t.Fatalf("unexpected episode NFO:\n%s", content)
+	}
+}

@@ -37,7 +37,7 @@ func main() {
 	logging.SetDefaultManager(logManager)
 	defer logging.SetDefaultManager(nil)
 
-	engine := router.Setup(cfg, db, logManager, credentialCipher)
+	engine, jobService := router.SetupWithLifecycle(cfg, db, logManager, credentialCipher)
 	server := &http.Server{Addr: ":" + cfg.ServerPort, Handler: engine, ReadHeaderTimeout: 10 * time.Second}
 	serverErrors := make(chan error, 1)
 	go func() { serverErrors <- server.ListenAndServe() }()
@@ -49,14 +49,16 @@ func main() {
 	case err := <-serverErrors:
 		if err != nil && err != http.ErrServerClosed {
 			logging.Error("server", "HTTP server failed", logging.Fields{"error": err})
-			log.Fatal(err)
 		}
 	case <-stop:
 		logging.Info("server", "shutdown signal received", nil)
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
-		if err := server.Shutdown(ctx); err != nil {
-			logging.Error("server", "graceful shutdown failed", logging.Fields{"error": err})
-		}
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := server.Shutdown(ctx); err != nil {
+		logging.Error("server", "graceful shutdown failed", logging.Fields{"error": err})
+	}
+	if err := jobService.Shutdown(ctx); err != nil {
+		logging.Error("job", "job shutdown timed out", logging.Fields{"error": err})
 	}
 }

@@ -198,7 +198,8 @@ export interface PreviewPlan {
   proposed_directory_renames: RenameItem[]
   proposed_file_renames: RenameItem[]
   generated_files: string[]
-  artifacts: { path: string; kind: 'nfo' | 'poster' | 'backdrop'; source_url?: string; content?: string }[]
+  artifacts: { path: string; kind: 'nfo' | 'poster' | 'backdrop' | 'episode_nfo' | 'episode_thumb'; source_url?: string; content?: string }[]
+  episode_files: { source_path: string; target_path: string; season: number; episode: number }[]
   warnings: string[]
   conflicts: { code: string; source_path?: string; target_path?: string }[]
 }
@@ -212,4 +213,60 @@ export interface ScrapePreview {
   plan: PreviewPlan
   expires_at: string
   created_at: string
+}
+
+export type JobStatus = 'pending' | 'running' | 'succeeded' | 'failed' | 'canceled'
+
+export interface ScrapeJob {
+  id: number
+  target_id: number
+  preview_id: number
+  candidate_id: number
+  connection_id: number
+  actor_id: number
+  status: JobStatus
+  stage: 'preparing' | 'renaming' | 'generating' | 'uploading' | 'verifying' | 'completed'
+  progress: number
+  message?: string
+  error_code?: string
+  error_message?: string
+  checkpoint: number
+  attempts: number
+  started_at?: string
+  completed_at?: string
+  created_at: string
+  updated_at: string
+}
+
+export interface ScrapeJobOperation {
+  id: number
+  job_id: number
+  sequence: number
+  type: 'mkdir' | 'rename' | 'move' | 'upload'
+  source_path?: string
+  target_path: string
+  artifact_kind?: string
+  content_type?: string
+  status: 'pending' | 'running' | 'succeeded' | 'skipped' | 'failed'
+  attempts: number
+  last_error?: string
+  started_at?: string
+  completed_at?: string
+}
+
+export interface Page<T> {
+  items: T[]
+  total: number
+  page: number
+  size: number
+}
+
+export interface APIRequestLog {
+  id: number; request_id: string; occurred_at: string; method: string; route: string; status_code: number; latency_ms: number; username?: string; target_id?: number; job_id?: number; error_code?: string
+}
+export interface ApplicationLog {
+  id: number; occurred_at: string; level: string; source: string; message: string; fields?: string; request_id?: string; target_id?: number; job_id?: number
+}
+export interface AuditLog {
+  id: number; actor_id: number; action: string; target: string; detail: string; occurred_at: string
 }

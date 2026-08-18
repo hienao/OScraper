@@ -47,7 +47,7 @@ func buildFullPreviewPlan(target *model.ScrapeTarget, candidate *model.MediaCand
 		ReadOnly: true, RenameAllowed: target.RenameEnabled, OrganizeFlatMovie: flatMovie,
 		SourcePath: candidate.Path, ProposedDirectoryName: path.Base(finalRoot), ProposedDirectoryPath: finalRoot,
 		ProposedDirectoryCreates: []string{}, ProposedDirectoryRenames: []RenameItem{},
-		ProposedFileRenames: []RenameItem{}, GeneratedFiles: []string{}, Artifacts: []PreviewArtifact{}, Warnings: []string{}, Conflicts: []PlanConflict{},
+		ProposedFileRenames: []RenameItem{}, GeneratedFiles: []string{}, Artifacts: []PreviewArtifact{}, EpisodeFiles: []EpisodeFilePlan{}, Warnings: []string{}, Conflicts: []PlanConflict{},
 	}
 	planner := newRenamePlanner(&plan, entries, siblings)
 	if target.RenameEnabled {
@@ -121,9 +121,6 @@ func (p *renamePlanner) planMovie(candidate *model.MediaCandidate, entries, sibl
 }
 
 func (p *renamePlanner) planSeries(candidate *model.MediaCandidate, entries []openlist.DirectoryEntry, title, finalRoot string, rename bool) {
-	if !rename {
-		return
-	}
 	seasonDirectories := map[int]string{}
 	for _, entry := range entries {
 		if !entry.IsDir {
@@ -143,7 +140,7 @@ func (p *renamePlanner) planSeries(candidate *model.MediaCandidate, entries []op
 				seasonDirectories[season] = entry.Path
 			}
 			targetPath := path.Join(finalRoot, seasonName(season))
-			if entry.Name != seasonName(season) {
+			if rename && entry.Name != seasonName(season) {
 				p.addRename(entry.Path, targetPath, "directory")
 			}
 		}
@@ -161,15 +158,27 @@ func (p *renamePlanner) planSeries(candidate *model.MediaCandidate, entries []op
 		}
 		season, episode := *info.Season, *info.Episode
 		seasonDirectory := path.Join(finalRoot, seasonName(season))
-		if _, hasDirectory := seasonDirectories[season]; !hasDirectory {
-			if _, created := createdSeasons[season]; !created {
-				p.addCreate(seasonDirectory, video.Path)
-				createdSeasons[season] = struct{}{}
+		if !rename {
+			seasonDirectory = path.Dir(video.Path)
+		}
+		if rename {
+			if _, hasDirectory := seasonDirectories[season]; !hasDirectory {
+				if _, created := createdSeasons[season]; !created {
+					p.addCreate(seasonDirectory, video.Path)
+					createdSeasons[season] = struct{}{}
+				}
 			}
 		}
 		targetBase := fmt.Sprintf("%s - S%02dE%02d", safeMediaName(title), season, episode)
-		p.addRename(video.Path, path.Join(seasonDirectory, targetBase+path.Ext(video.Name)), "video")
-		p.planCompanions(video, entries, targetBase, seasonDirectory, claimedAssets)
+		targetVideo := path.Join(seasonDirectory, targetBase+path.Ext(video.Name))
+		if !rename {
+			targetVideo = video.Path
+		}
+		p.plan.EpisodeFiles = append(p.plan.EpisodeFiles, EpisodeFilePlan{SourcePath: video.Path, TargetPath: targetVideo, Season: season, Episode: episode})
+		if rename {
+			p.addRename(video.Path, targetVideo, "video")
+			p.planCompanions(video, entries, targetBase, seasonDirectory, claimedAssets)
+		}
 	}
 }
 

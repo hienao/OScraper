@@ -1,5 +1,5 @@
 import { apiRequest } from './client'
-import type { ConnectionTestResult, CreateConnectionInput, DirectoryLevel, MediaCandidate, OpenListConnection, ScanRun, ScrapePreview, ScrapingSettings, ScrapingSettingsInput, ScrapeTarget, TargetInput, TMDBSearchResult, TokenResponse, UpdateConnectionInput, User } from './types'
+import type { APIRequestLog, ApplicationLog, AuditLog, ConnectionTestResult, CreateConnectionInput, DirectoryLevel, JobStatus, MediaCandidate, OpenListConnection, Page, ScanRun, ScrapeJob, ScrapeJobOperation, ScrapePreview, ScrapingSettings, ScrapingSettingsInput, ScrapeTarget, TargetInput, TMDBSearchResult, TokenResponse, UpdateConnectionInput, User } from './types'
 
 export const authApi = {
   login: (body: { username: string; password: string }) => apiRequest<TokenResponse>('/api/auth/login', { method: 'POST', body, auth: false }),
@@ -43,4 +43,19 @@ export const previewApi = {
   search: (targetId: number, body: { candidate_id: number; title?: string; year?: number }) => apiRequest<TMDBSearchResult[]>(`/api/scrape-targets/${targetId}/previews/search`, { method: 'POST', body }),
   create: (targetId: number, body: { candidate_id: number; tmdb_id?: number; title?: string; year?: number }) => apiRequest<ScrapePreview>(`/api/scrape-targets/${targetId}/previews`, { method: 'POST', body }),
   get: (targetId: number, previewId: number) => apiRequest<ScrapePreview>(`/api/scrape-targets/${targetId}/previews/${previewId}`),
+}
+
+export const jobApi = {
+  list: (status?: JobStatus | '', page = 1, size = 50) => apiRequest<Page<ScrapeJob>>(`/api/scrape-jobs?${new URLSearchParams({ ...(status ? { status } : {}), page: String(page), size: String(size) })}`),
+  get: (id: number) => apiRequest<ScrapeJob>(`/api/scrape-jobs/${id}`),
+  operations: (id: number) => apiRequest<ScrapeJobOperation[]>(`/api/scrape-jobs/${id}/operations`),
+  submit: (targetId: number, body: { preview_id: number; rename_media: boolean; confirm_directory_fingerprint: string }, key: string) => apiRequest<ScrapeJob>(`/api/scrape-targets/${targetId}/jobs`, { method: 'POST', headers: { 'Idempotency-Key': key }, body }),
+  retry: (id: number) => apiRequest<ScrapeJob>(`/api/scrape-jobs/${id}/retry`, { method: 'POST' }),
+  cancel: (id: number) => apiRequest<ScrapeJob>(`/api/scrape-jobs/${id}/cancel`, { method: 'POST' }),
+}
+
+export const logApi = {
+  api: (query = '') => apiRequest<Page<APIRequestLog>>(`/api/admin/logs${query ? `?${query}` : ''}`),
+  application: (query = '') => apiRequest<Page<ApplicationLog>>(`/api/admin/application-logs${query ? `?${query}` : ''}`),
+  audit: (query = '') => apiRequest<Page<AuditLog>>(`/api/admin/audit-logs${query ? `?${query}` : ''}`),
 }
