@@ -4,7 +4,7 @@ import (
 	"strings"
 	"time"
 
-	"openlistscraper/internal/model"
+	"oscraper/internal/model"
 
 	"gorm.io/gorm"
 )

@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"openlistscraper/internal/provider/tmdb"
+	"oscraper/internal/provider/tmdb"
 )
 
 func TestMovieNFOIsEscapedAndKodiCompatible(t *testing.T) {

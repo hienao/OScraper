@@ -16,10 +16,10 @@ import (
 	"testing"
 	"time"
 
-	"openlistscraper/config"
-	"openlistscraper/internal/model"
-	"openlistscraper/internal/openlist"
-	"openlistscraper/pkg/cryptoutil"
+	"oscraper/config"
+	"oscraper/internal/model"
+	"oscraper/internal/openlist"
+	"oscraper/pkg/cryptoutil"
 
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"

@@ -7,10 +7,10 @@ import (
 	"strings"
 	"time"
 
-	"openlistscraper/internal/model"
-	"openlistscraper/internal/openlist"
-	"openlistscraper/internal/repository"
-	"openlistscraper/pkg/cryptoutil"
+	"oscraper/internal/model"
+	"oscraper/internal/openlist"
+	"oscraper/internal/repository"
+	"oscraper/pkg/cryptoutil"
 
 	"gorm.io/gorm"
 )

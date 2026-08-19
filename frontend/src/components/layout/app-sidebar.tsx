@@ -14,7 +14,7 @@ export function AppSidebar({ className = '', mobile = false, onClose, onNavigate
   return (
     <aside className={`w-60 flex-col border-r border-neutral-200/80 bg-white/88 backdrop-blur-xl dark:border-neutral-800 dark:bg-neutral-950/88 ${className}`} aria-label={t('navigation.aria')} role={mobile ? 'dialog' : undefined} aria-modal={mobile || undefined}>
       <div className="flex min-h-20 items-center justify-between px-4 py-3">
-        <Link to="/" className="flex min-w-0 items-center gap-2.5" onClick={onNavigate}><BrandMark /><span className="truncate font-bold tracking-tight">OpenlistScraper</span></Link>
+        <Link to="/" className="flex min-w-0 items-center gap-2.5" onClick={onNavigate}><BrandMark /><span className="truncate font-bold tracking-tight">OScraper</span></Link>
         {mobile && <Button variant="ghost" size="icon-md" aria-label={t('navigation.close')} onClick={onClose}><X size={20} /></Button>}
       </div>
       <nav className="flex-1 overflow-y-auto px-3 py-4">

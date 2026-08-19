@@ -9,10 +9,10 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"openlistscraper/internal/model"
-	"openlistscraper/internal/openlist"
-	"openlistscraper/internal/provider/tmdb"
-	"openlistscraper/internal/repository"
+	"oscraper/internal/model"
+	"oscraper/internal/openlist"
+	"oscraper/internal/provider/tmdb"
+	"oscraper/internal/repository"
 
 	"gorm.io/gorm"
 )

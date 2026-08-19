@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"openlistscraper/internal/provider/tmdb"
+	"oscraper/internal/provider/tmdb"
 )
 
 type seasonCatalogStub struct{ episodes []tmdb.Episode }

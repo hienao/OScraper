@@ -154,7 +154,7 @@ func (c *Client) TestConnection(ctx context.Context, rawBaseURL, token string) (
 	}
 	request.Header.Set("Accept", "application/json")
 	request.Header.Set("Authorization", strings.TrimSpace(token))
-	request.Header.Set("User-Agent", "OpenlistScraper/1.0")
+	request.Header.Set("User-Agent", "OScraper/1.0")
 	response, err := c.httpClient.Do(request)
 	if err != nil {
 		return nil, &APIError{Code: "openlist.connection_failed", Message: "Could not connect to OpenList", Cause: err}
@@ -251,7 +251,7 @@ func (c *Client) ListDirectory(ctx context.Context, rawBaseURL, token, remotePat
 	request.Header.Set("Content-Type", "application/json")
 	request.Header.Set("Accept", "application/json")
 	request.Header.Set("Authorization", strings.TrimSpace(token))
-	request.Header.Set("User-Agent", "OpenlistScraper/1.0")
+	request.Header.Set("User-Agent", "OScraper/1.0")
 	response, err := c.httpClient.Do(request)
 	if err != nil {
 		return nil, &APIError{Code: "openlist.connection_failed", Message: "Could not read OpenList directory", Cause: err}
@@ -416,7 +416,7 @@ func mutationEndpoint(ctx context.Context, rawBaseURL, route string) (*url.URL, 
 func setMutationHeaders(request *http.Request, token string) {
 	request.Header.Set("Accept", "application/json")
 	request.Header.Set("Authorization", strings.TrimSpace(token))
-	request.Header.Set("User-Agent", "OpenlistScraper/1.0")
+	request.Header.Set("User-Agent", "OScraper/1.0")
 }
 
 func (c *Client) doMutation(request *http.Request) error {

@@ -33,7 +33,7 @@ export function LogsPage() {
     const url = URL.createObjectURL(new Blob([`\uFEFF${csv}`], { type: 'text/csv;charset=utf-8' }))
     const anchor = document.createElement('a')
     anchor.href = url
-    anchor.download = `openlist-scraper-${tab}-logs-${new Date().toISOString().slice(0, 10)}.csv`
+    anchor.download = `oscraper-${tab}-logs-${new Date().toISOString().slice(0, 10)}.csv`
     anchor.click()
     URL.revokeObjectURL(url)
   }

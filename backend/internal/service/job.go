@@ -16,12 +16,12 @@ import (
 	"sync"
 	"time"
 
-	"openlistscraper/config"
-	"openlistscraper/internal/logging"
-	"openlistscraper/internal/model"
-	"openlistscraper/internal/openlist"
-	"openlistscraper/internal/repository"
-	"openlistscraper/pkg/cryptoutil"
+	"oscraper/config"
+	"oscraper/internal/logging"
+	"oscraper/internal/model"
+	"oscraper/internal/openlist"
+	"oscraper/internal/repository"
+	"oscraper/pkg/cryptoutil"
 
 	"gorm.io/gorm"
 )

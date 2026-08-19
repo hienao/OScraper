@@ -1,7 +1,7 @@
 package repository
 
 import (
-	"openlistscraper/internal/model"
+	"oscraper/internal/model"
 
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"

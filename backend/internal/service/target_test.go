@@ -6,9 +6,9 @@ import (
 	"testing"
 	"time"
 
-	"openlistscraper/internal/model"
-	"openlistscraper/internal/openlist"
-	"openlistscraper/pkg/cryptoutil"
+	"oscraper/internal/model"
+	"oscraper/internal/openlist"
+	"oscraper/pkg/cryptoutil"
 
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"

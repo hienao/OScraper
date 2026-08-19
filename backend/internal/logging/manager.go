@@ -8,8 +8,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	"openlistscraper/config"
-	"openlistscraper/internal/model"
+	"oscraper/config"
+	"oscraper/internal/model"
 
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"

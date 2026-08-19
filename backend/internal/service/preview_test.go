@@ -5,10 +5,10 @@ import (
 	"fmt"
 	"testing"
 
-	"openlistscraper/internal/model"
-	"openlistscraper/internal/openlist"
-	"openlistscraper/internal/provider/tmdb"
-	"openlistscraper/pkg/cryptoutil"
+	"oscraper/internal/model"
+	"oscraper/internal/openlist"
+	"oscraper/internal/provider/tmdb"
+	"oscraper/pkg/cryptoutil"
 
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"

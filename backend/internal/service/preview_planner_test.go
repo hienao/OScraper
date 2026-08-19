@@ -3,9 +3,9 @@ package service
 import (
 	"testing"
 
-	"openlistscraper/internal/model"
-	"openlistscraper/internal/openlist"
-	"openlistscraper/internal/provider/tmdb"
+	"oscraper/internal/model"
+	"oscraper/internal/openlist"
+	"oscraper/internal/provider/tmdb"
 )
 
 func TestSeriesPlanRenamesSeasonEpisodesAndCompanions(t *testing.T) {

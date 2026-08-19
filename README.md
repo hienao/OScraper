@@ -1,4 +1,4 @@
-# OpenlistScraper
+# OScraper
 
 A focused web application for scraping media directories stored in OpenList. The application uses a Go/Gin API and a React/TypeScript web interface, following the architecture and interaction conventions of Seshat and porting the safe, manually triggered OpenList scraping flow from ostrm.
 

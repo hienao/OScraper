@@ -3,7 +3,7 @@ package repository
 import (
 	"time"
 
-	"openlistscraper/internal/model"
+	"oscraper/internal/model"
 
 	"gorm.io/gorm"
 )

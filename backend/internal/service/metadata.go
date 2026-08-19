@@ -6,8 +6,8 @@ import (
 	"strings"
 	"time"
 
-	"openlistscraper/internal/metadata"
-	"openlistscraper/internal/provider/tmdb"
+	"oscraper/internal/metadata"
+	"oscraper/internal/provider/tmdb"
 )
 
 func buildMetadataArtifacts(detail *tmdb.Detail, finalRoot, standardName string, generatedAt time.Time) []PreviewArtifact {

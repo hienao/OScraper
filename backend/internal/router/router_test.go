@@ -10,10 +10,10 @@ import (
 	"strings"
 	"testing"
 
-	"openlistscraper/config"
-	"openlistscraper/internal/logging"
-	"openlistscraper/pkg/cryptoutil"
-	"openlistscraper/pkg/database"
+	"oscraper/config"
+	"oscraper/internal/logging"
+	"oscraper/pkg/cryptoutil"
+	"oscraper/pkg/database"
 )
 
 func TestAuthenticatedConnectionTargetAndScanFlow(t *testing.T) {

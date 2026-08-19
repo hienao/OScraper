@@ -8,7 +8,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"openlistscraper/internal/model"
+	"oscraper/internal/model"
 )
 
 type Fields map[string]interface{}

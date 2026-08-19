@@ -4,8 +4,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"openlistscraper/config"
-	"openlistscraper/internal/model"
+	"oscraper/config"
+	"oscraper/internal/model"
 )
 
 func TestOpenAppliesInitialMigrationIdempotently(t *testing.T) {

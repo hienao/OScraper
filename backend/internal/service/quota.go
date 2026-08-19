@@ -5,7 +5,7 @@ import (
 	"sync"
 	"time"
 
-	"openlistscraper/internal/model"
+	"oscraper/internal/model"
 )
 
 type ConnectionQuota struct {

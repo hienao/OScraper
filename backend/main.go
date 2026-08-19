@@ -9,11 +9,11 @@ import (
 	"syscall"
 	"time"
 
-	"openlistscraper/config"
-	"openlistscraper/internal/logging"
-	"openlistscraper/internal/router"
-	"openlistscraper/pkg/cryptoutil"
-	"openlistscraper/pkg/database"
+	"oscraper/config"
+	"oscraper/internal/logging"
+	"oscraper/internal/router"
+	"oscraper/pkg/cryptoutil"
+	"oscraper/pkg/database"
 )
 
 func main() {
@@ -41,7 +41,7 @@ func main() {
 	server := &http.Server{Addr: ":" + cfg.ServerPort, Handler: engine, ReadHeaderTimeout: 10 * time.Second}
 	serverErrors := make(chan error, 1)
 	go func() { serverErrors <- server.ListenAndServe() }()
-	logging.Info("server", "OpenlistScraper started", logging.Fields{"port": cfg.ServerPort, "environment": cfg.AppEnv})
+	logging.Info("server", "OScraper started", logging.Fields{"port": cfg.ServerPort, "environment": cfg.AppEnv})
 
 	stop := make(chan os.Signal, 1)
 	signal.Notify(stop, syscall.SIGINT, syscall.SIGTERM)

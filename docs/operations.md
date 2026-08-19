@@ -1,6 +1,8 @@
-# OpenlistScraper 运维与灰度指南
+# OScraper 运维与灰度指南
 
 ## 1. 上线前准备
+
+从旧名称升级时，默认 SQLite 文件 `openlist-scraper.db`、PostgreSQL 默认库名和浏览器存储键仍保留原值作为兼容标识，请勿仅因应用更名而手工改名或删除。
 
 1. 从 `.env.example` 复制 `.env`，生成独立的 `JWT_SECRET` 与 32 字节 `CREDENTIAL_ENCRYPTION_KEY`。加密密钥一旦更换，已有 OpenList Token 和 TMDB Key 将无法解密。
 2. 默认 SQLite 适合单实例部署；不要让多个应用容器同时挂载同一个 SQLite 文件。多实例使用 PostgreSQL。
@@ -23,7 +25,7 @@
 
 ```bash
 docker compose stop app
-tar -czf openlistscraper-backup-$(date +%Y%m%d-%H%M%S).tar.gz runtime/data .env
+tar -czf oscraper-backup-$(date +%Y%m%d-%H%M%S).tar.gz runtime/data .env
 docker compose start app
 ```
 

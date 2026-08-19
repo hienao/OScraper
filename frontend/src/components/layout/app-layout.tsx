@@ -15,7 +15,7 @@ export function AppLayout() {
   useEffect(() => setNavigationOpen(false), [location.pathname])
 
   const content = <Suspense fallback={<div className="grid min-h-[60vh] place-items-center"><Spinner className="size-8" /></div>}><Outlet /></Suspense>
-  if (!user) return <div className="flex min-h-screen flex-col"><AppHeader /><main id="main-content" className="flex-1">{content}</main><footer className="border-t border-neutral-200/70 px-4 py-6 text-center text-sm text-neutral-500 dark:border-neutral-800">OpenlistScraper · {t('common.productDescription')}</footer></div>
+  if (!user) return <div className="flex min-h-screen flex-col"><AppHeader /><main id="main-content" className="flex-1">{content}</main><footer className="border-t border-neutral-200/70 px-4 py-6 text-center text-sm text-neutral-500 dark:border-neutral-800">OScraper · {t('common.productDescription')}</footer></div>
   return (
     <div className="flex min-h-screen">
       <a href="#main-content" className="sr-only focus:not-sr-only">{t('navigation.skip')}</a>

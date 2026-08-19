@@ -4,8 +4,8 @@ import (
 	"strconv"
 	"strings"
 
-	"openlistscraper/internal/service"
-	"openlistscraper/pkg/response"
+	"oscraper/internal/service"
+	"oscraper/pkg/response"
 
 	"github.com/gin-gonic/gin"
 )

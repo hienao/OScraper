@@ -3,8 +3,8 @@ package service
 import (
 	"testing"
 
-	"openlistscraper/config"
-	"openlistscraper/internal/model"
+	"oscraper/config"
+	"oscraper/internal/model"
 
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"

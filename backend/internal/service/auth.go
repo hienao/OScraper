@@ -5,9 +5,9 @@ import (
 	"strings"
 	"time"
 
-	"openlistscraper/config"
-	"openlistscraper/internal/model"
-	"openlistscraper/internal/repository"
+	"oscraper/config"
+	"oscraper/internal/model"
+	"oscraper/internal/repository"
 
 	"github.com/golang-jwt/jwt/v5"
 	"golang.org/x/crypto/bcrypt"

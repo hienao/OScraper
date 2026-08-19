@@ -1,9 +1,9 @@
 package handler
 
 import (
-	"openlistscraper/internal/logging"
-	"openlistscraper/internal/service"
-	"openlistscraper/pkg/response"
+	"oscraper/internal/logging"
+	"oscraper/internal/service"
+	"oscraper/pkg/response"
 
 	"github.com/gin-gonic/gin"
 )

@@ -6,8 +6,8 @@ import (
 	"os"
 	"path/filepath"
 
-	"openlistscraper/config"
-	"openlistscraper/internal/model"
+	"oscraper/config"
+	"oscraper/internal/model"
 
 	"gorm.io/driver/postgres"
 	"gorm.io/driver/sqlite"

@@ -7,10 +7,10 @@ import (
 	"strings"
 	"time"
 
-	"openlistscraper/internal/media"
-	"openlistscraper/internal/model"
-	"openlistscraper/internal/openlist"
-	"openlistscraper/internal/provider/tmdb"
+	"oscraper/internal/media"
+	"oscraper/internal/model"
+	"oscraper/internal/openlist"
+	"oscraper/internal/provider/tmdb"
 )
 
 type renamePlanner struct {

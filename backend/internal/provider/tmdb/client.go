@@ -248,7 +248,7 @@ func (c *Client) get(ctx context.Context, config Config, endpoint string, parame
 		return nil, &Error{Code: "tmdb.request_failed", Message: "Failed to create TMDB request", Cause: err}
 	}
 	request.Header.Set("Accept", "application/json")
-	request.Header.Set("User-Agent", "OpenlistScraper/1.0")
+	request.Header.Set("User-Agent", "OScraper/1.0")
 	timeout := config.Timeout
 	if timeout <= 0 {
 		timeout = 20 * time.Second

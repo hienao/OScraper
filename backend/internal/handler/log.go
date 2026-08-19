@@ -4,9 +4,9 @@ import (
 	"strconv"
 	"strings"
 
-	"openlistscraper/internal/logging"
-	"openlistscraper/internal/model"
-	"openlistscraper/pkg/response"
+	"oscraper/internal/logging"
+	"oscraper/internal/model"
+	"oscraper/pkg/response"
 
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"

@@ -5,9 +5,9 @@ import (
 	"net/http"
 	"strings"
 
-	"openlistscraper/config"
-	"openlistscraper/internal/repository"
-	"openlistscraper/pkg/response"
+	"oscraper/config"
+	"oscraper/internal/repository"
+	"oscraper/pkg/response"
 
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5"

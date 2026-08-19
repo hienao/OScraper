@@ -1,8 +1,8 @@
-# OpenlistScraper 完整设计方案
+# OScraper 完整设计方案
 
 ## 1. 方案结论
 
-OpenlistScraper 定位为一个独立的、面向 OpenList 的媒体目录刮削工作台：用户配置 OpenList 连接和一个受控根目录，应用按需浏览或扫描该目录，识别电影、电视剧和动画，预览 TMDB 匹配及文件变更计划，确认后异步完成可选重命名、NFO/图片生成和元数据回传。
+OScraper 定位为一个独立的、面向 OpenList 的媒体目录刮削工作台：用户配置 OpenList 连接和一个受控根目录，应用按需浏览或扫描该目录，识别电影、电视剧和动画，预览 TMDB 匹配及文件变更计划，确认后异步完成可选重命名、NFO/图片生成和元数据回传。
 
 应用外壳参考 Seshat：
 
@@ -133,7 +133,7 @@ flowchart LR
 | 国际化 | i18next/react-i18next | 英文默认，浏览器语言自动选择，手动偏好持久化 |
 | 部署 | 多阶段 Docker + Nginx | 单镜像交付，`amd64/arm64` 均可构建 |
 
-建议 Go module 使用 `openlistscraper`，前端包名使用 `openlist-scraper-web`。
+Go module 使用 `oscraper`，前端包名使用 `oscraper-web`。
 
 ## 6. 后端代码结构
 
@@ -548,7 +548,7 @@ flowchart LR
 
 ## 16. 从 ostrm 的迁移映射
 
-| ostrm 源 | OpenlistScraper 目标 | 策略 |
+| ostrm 源 | OScraper 目标 | 策略 |
 |---|---|---|
 | `OpenlistApiService` | `internal/openlist/client.go` | 重写协议层，保留官方端点、编码、错误和限流测试 |
 | `OpenlistApiRateLimiter` | `internal/openlist/limiter.go` | 迁移双令牌桶行为 |

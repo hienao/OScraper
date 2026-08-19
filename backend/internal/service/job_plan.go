@@ -6,7 +6,7 @@ import (
 	"sort"
 	"strings"
 
-	"openlistscraper/internal/model"
+	"oscraper/internal/model"
 )
 
 type pathRewrite struct {

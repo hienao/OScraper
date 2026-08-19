@@ -5,8 +5,8 @@ import (
 	"testing"
 	"time"
 
-	"openlistscraper/config"
-	"openlistscraper/internal/model"
+	"oscraper/config"
+	"oscraper/internal/model"
 )
 
 func TestManagerRemovesExpiredOperationalLogs(t *testing.T) {

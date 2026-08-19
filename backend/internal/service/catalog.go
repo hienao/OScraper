@@ -13,11 +13,11 @@ import (
 	"sync"
 	"time"
 
-	"openlistscraper/internal/media"
-	"openlistscraper/internal/model"
-	"openlistscraper/internal/openlist"
-	"openlistscraper/internal/repository"
-	"openlistscraper/pkg/cryptoutil"
+	"oscraper/internal/media"
+	"oscraper/internal/model"
+	"oscraper/internal/openlist"
+	"oscraper/internal/repository"
+	"oscraper/pkg/cryptoutil"
 
 	"gorm.io/gorm"
 )

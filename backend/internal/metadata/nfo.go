@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"time"
 
-	"openlistscraper/internal/provider/tmdb"
+	"oscraper/internal/provider/tmdb"
 )
 
 type rating struct {
