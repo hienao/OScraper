@@ -1,0 +1,50 @@
+@import "tailwindcss";
+@import "@appica/ui-react/styles.css";
+
+@source "../node_modules/@appica/ui-react/dist";
+@custom-variant dark (&:where(.dark, .dark *));
+
+:root {
+  font-family: "Avenir Next", "Segoe UI Variable", sans-serif;
+  color: var(--foreground);
+  background: var(--background);
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+}
+
+html { min-width: 320px; min-height: 100%; }
+body {
+  min-width: 320px;
+  min-height: 100vh;
+  margin: 0;
+  background:
+    radial-gradient(circle at 12% 2%, color-mix(in srgb, #0f9f83 12%, transparent), transparent 30rem),
+    radial-gradient(circle at 92% 18%, color-mix(in srgb, #ed7b56 9%, transparent), transparent 28rem),
+    var(--background);
+}
+
+button, a, input { -webkit-tap-highlight-color: transparent; }
+::selection { color: white; background: #087f6b; }
+
+.app-panel {
+  border: 1px solid color-mix(in srgb, var(--border) 82%, transparent);
+  border-radius: 1.25rem;
+  background: color-mix(in srgb, var(--background) 91%, transparent);
+  box-shadow: 0 18px 50px -32px rgb(15 23 42 / 0.38);
+  backdrop-filter: blur(18px);
+}
+
+.app-grid {
+  background-image:
+    linear-gradient(to right, color-mix(in srgb, var(--border) 30%, transparent) 1px, transparent 1px),
+    linear-gradient(to bottom, color-mix(in srgb, var(--border) 30%, transparent) 1px, transparent 1px);
+  background-size: 32px 32px;
+  mask-image: linear-gradient(to bottom, black, transparent 88%);
+}
+
+@keyframes rise-in {
+  from { opacity: 0; transform: translateY(14px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.rise-in { animation: rise-in 500ms cubic-bezier(.2, .8, .2, 1) both; }
+@media (prefers-reduced-motion: reduce) { .rise-in { animation: none; } }

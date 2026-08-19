@@ -1,0 +1,150 @@
+package router
+
+import (
+	"net/http"
+	"time"
+
+	"oscraper/config"
+	"oscraper/internal/handler"
+	"oscraper/internal/logging"
+	"oscraper/internal/middleware"
+	"oscraper/internal/openlist"
+	"oscraper/internal/provider/tmdb"
+	"oscraper/internal/service"
+	"oscraper/pkg/cryptoutil"
+	"oscraper/pkg/response"
+
+	"github.com/gin-gonic/gin"
+	"gorm.io/gorm"
+)
+
+func Setup(cfg *config.Config, db *gorm.DB, logManager *logging.Manager, credentialCipher *cryptoutil.Cipher) *gin.Engine {
+	router, _ := SetupWithLifecycle(cfg, db, logManager, credentialCipher)
+	return router
+}
+
+func SetupWithLifecycle(cfg *config.Config, db *gorm.DB, logManager *logging.Manager, credentialCipher *cryptoutil.Cipher) (*gin.Engine, *service.JobService) {
+	gin.SetMode(cfg.GinMode)
+	router := gin.New()
+	router.Use(logging.RequestIDMiddleware(), logging.AccessLogMiddleware(logManager), gin.Recovery(), corsMiddleware())
+
+	authService := service.NewAuthService(cfg, db)
+	if err := authService.InitBootstrapAdmin(); err != nil {
+		panic("failed to initialize bootstrap administrator: " + err.Error())
+	}
+	openListClient := openlist.NewClient(time.Duration(cfg.HTTPTimeoutSeconds) * time.Second)
+	quota := service.NewConnectionQuota()
+	connectionService := service.NewConnectionService(db, credentialCipher, openListClient)
+	targetService := service.NewTargetService(db, credentialCipher, openListClient)
+	catalogService := service.NewCatalogService(db, credentialCipher, openListClient, quota)
+	tmdbClient := tmdb.NewClient()
+	settingService := service.NewSettingService(db, credentialCipher, tmdbClient)
+	previewService := service.NewPreviewService(db, settingService, tmdbClient, catalogService)
+	jobService, err := service.NewJobService(db, cfg, credentialCipher, openListClient, catalogService, quota)
+	if err != nil {
+		panic("failed to initialize scrape jobs: " + err.Error())
+	}
+
+	authHandler := handler.NewAuthHandler(authService)
+	connectionHandler := handler.NewConnectionHandler(connectionService)
+	targetHandler := handler.NewTargetHandler(targetService)
+	catalogHandler := handler.NewCatalogHandler(catalogService)
+	settingHandler := handler.NewSettingHandler(settingService)
+	previewHandler := handler.NewPreviewHandler(previewService)
+	jobHandler := handler.NewJobHandler(jobService)
+	logHandler := handler.NewLogHandler(logManager, db)
+
+	router.GET("/api/health", func(c *gin.Context) {
+		response.Success(c, gin.H{"status": "ok", "time": time.Now().UTC()})
+	})
+
+	api := router.Group("/api")
+	{
+		auth := api.Group("/auth")
+		{
+			auth.POST("/login", authHandler.Login)
+			auth.POST("/logout", middleware.JWTAuth(cfg, db), authHandler.Logout)
+			auth.POST("/setup-admin", middleware.JWTAuth(cfg, db), authHandler.SetupAdmin)
+		}
+
+		user := api.Group("/user", middleware.JWTAuth(cfg, db))
+		{
+			user.GET("/profile", authHandler.Profile)
+			user.PUT("/password", middleware.AdminSetupComplete(), authHandler.ChangePassword)
+		}
+
+		connections := api.Group("/openlist-connections", middleware.JWTAuth(cfg, db), middleware.AdminSetupComplete(), middleware.AdminOnly())
+		{
+			connections.GET("", connectionHandler.List)
+			connections.POST("", connectionHandler.Create)
+			connections.POST("/test", connectionHandler.Test)
+			connections.GET("/:id", connectionHandler.Get)
+			connections.PUT("/:id", connectionHandler.Update)
+			connections.DELETE("/:id", connectionHandler.Delete)
+			connections.POST("/:id/test", connectionHandler.TestSaved)
+			connections.POST("/:id/rotate-token", connectionHandler.RotateToken)
+		}
+
+		targets := api.Group("/scrape-targets", middleware.JWTAuth(cfg, db), middleware.AdminSetupComplete(), middleware.AdminOnly())
+		{
+			targets.GET("", targetHandler.List)
+			targets.POST("", targetHandler.Create)
+			targets.GET("/:id", targetHandler.Get)
+			targets.PUT("/:id", targetHandler.Update)
+			targets.DELETE("/:id", targetHandler.Delete)
+			targets.GET("/:id/tree", targetHandler.Browse)
+			targets.GET("/:id/tree/children", targetHandler.Browse)
+			targets.POST("/:id/scans", catalogHandler.Scan)
+			targets.GET("/:id/scans/:scanId", catalogHandler.GetScan)
+			targets.GET("/:id/candidates", catalogHandler.Candidates)
+			targets.POST("/:id/previews", previewHandler.Create)
+			targets.POST("/:id/previews/search", previewHandler.Search)
+			targets.POST("/:id/previews/tmdb", previewHandler.Create)
+			targets.GET("/:id/previews/:previewId", previewHandler.Get)
+			targets.POST("/:id/jobs", jobHandler.Submit)
+		}
+
+		jobs := api.Group("/scrape-jobs", middleware.JWTAuth(cfg, db), middleware.AdminSetupComplete(), middleware.AdminOnly())
+		{
+			jobs.GET("", jobHandler.List)
+			jobs.GET("/:id", jobHandler.Get)
+			jobs.GET("/:id/operations", jobHandler.Operations)
+			jobs.POST("/:id/retry", jobHandler.Retry)
+			jobs.POST("/:id/cancel", jobHandler.Cancel)
+		}
+
+		settings := api.Group("/settings", middleware.JWTAuth(cfg, db), middleware.AdminSetupComplete(), middleware.AdminOnly())
+		{
+			settings.GET("/scraping", settingHandler.GetScraping)
+			settings.PUT("/scraping", settingHandler.SaveScraping)
+			settings.POST("/scraping/test-tmdb", settingHandler.TestTMDB)
+		}
+
+		admin := api.Group("/admin", middleware.JWTAuth(cfg, db), middleware.AdminSetupComplete(), middleware.AdminOnly())
+		{
+			admin.GET("/logs", logHandler.API)
+			admin.GET("/application-logs", logHandler.Application)
+			admin.GET("/audit-logs", logHandler.Audit)
+		}
+	}
+
+	router.NoRoute(func(c *gin.Context) {
+		response.Error(c, http.StatusNotFound, "http.not_found", "Route not found")
+	})
+	return router, jobService
+}
+
+func corsMiddleware() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		if c.GetHeader("Origin") != "" {
+			c.Header("Access-Control-Allow-Origin", "*")
+		}
+		c.Header("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Request-ID, Idempotency-Key")
+		c.Header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
+		if c.Request.Method == http.MethodOptions {
+			c.AbortWithStatus(http.StatusNoContent)
+			return
+		}
+		c.Next()
+	}
+}
