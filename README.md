@@ -62,6 +62,22 @@ Open <http://localhost:3113>. Persistent application data is mounted at `./runti
 
 Before upgrading or testing against real media, follow the backup and small-library gray-release procedure in [docs/operations.md](docs/operations.md).
 
+## Releases
+
+OScraper publishes multi-platform images only for version tags. Beta tags such as `v1.2.0-beta.1` publish the exact version plus `beta`; stable tags such as `v1.2.0` publish the exact version, `1.2`, `1`, and `latest`.
+
+```bash
+# Beta
+git tag v1.2.0-beta.1
+git push origin v1.2.0-beta.1
+
+# Stable
+git tag v1.2.0
+git push origin v1.2.0
+```
+
+Images are available from `ghcr.io/<repository-owner>/oscraper`. See the [release guide](docs/release.md) for validation, approval, rollback, and manual retry rules.
+
 ## Verification
 
 ```bash

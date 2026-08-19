@@ -4,31 +4,195 @@ on:
   push:
     tags: ['v*']
   workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing version tag to publish (for example v1.2.0-beta.1 or v1.2.0)
+        required: true
+        type: string
 
 permissions:
   contents: read
-  packages: write
+
+concurrency:
+  group: publish-${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+  cancel-in-progress: false
 
 jobs:
-  publish:
+  classify:
+    name: Validate release tag
+    runs-on: ubuntu-latest
+    outputs:
+      channel: ${{ steps.version.outputs.channel }}
+      environment: ${{ steps.version.outputs.environment }}
+      tag: ${{ steps.version.outputs.tag }}
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+          fetch-depth: 0
+      - name: Classify and validate version
+        id: version
+        shell: bash
+        env:
+          REQUESTED_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+        run: |
+          set -euo pipefail
+          tag="${REQUESTED_TAG}"
+          if [[ "${tag}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+-beta\.[0-9]+$ ]]; then
+            channel="beta"
+            environment="ghcr-beta"
+          elif [[ "${tag}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            channel="production"
+            environment="ghcr-production"
+          else
+            echo "Unsupported release tag: ${tag}" >&2
+            exit 1
+          fi
+
+          git fetch origin main:refs/remotes/origin/main --tags --force
+          tag_sha="$(git rev-parse "${tag}^{commit}")"
+          if ! git merge-base --is-ancestor "${tag_sha}" origin/main; then
+            echo "Release tag ${tag} does not point to a commit contained in main" >&2
+            exit 1
+          fi
+
+          echo "channel=${channel}" >> "${GITHUB_OUTPUT}"
+          echo "environment=${environment}" >> "${GITHUB_OUTPUT}"
+          echo "tag=${tag}" >> "${GITHUB_OUTPUT}"
+          echo "version=${tag#v}" >> "${GITHUB_OUTPUT}"
+
+  test:
+    name: Release tests
+    needs: classify
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.classify.outputs.tag }}
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: backend/go.mod
+          cache-dependency-path: backend/go.sum
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Backend tests
+        working-directory: backend
+        run: go test -race ./...
+      - name: Backend static analysis
+        working-directory: backend
+        run: go vet ./...
+      - name: Frontend install
+        working-directory: frontend
+        run: npm ci
+      - name: Frontend tests
+        working-directory: frontend
+        run: npm test -- --run
+      - name: Frontend build
+        working-directory: frontend
+        run: npm run build
+      - name: Validate Compose
+        run: docker compose --env-file .env.example config
+
+  verify-image:
+    name: Container smoke test
+    needs: [classify, test]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.classify.outputs.tag }}
+      - uses: docker/setup-buildx-action@v3
+      - name: Build verification image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: deploy/Dockerfile
+          platforms: linux/amd64
+          load: true
+          push: false
+          tags: oscraper:release-check
+          cache-from: type=gha,scope=oscraper-linux-amd64
+          cache-to: type=gha,mode=max,scope=oscraper-linux-amd64
+      - name: Verify container health
+        shell: bash
+        run: |
+          set -euo pipefail
+          cleanup() {
+            docker rm --force oscraper-release-check >/dev/null 2>&1 || true
+          }
+          trap cleanup EXIT
+          docker run --detach --name oscraper-release-check \
+            --env APP_ENV=production \
+            --env JWT_SECRET=release-check-jwt-secret-with-at-least-32-characters \
+            --env CREDENTIAL_ENCRYPTION_KEY=abcdef0123456789abcdef0123456789 \
+            oscraper:release-check >/dev/null
+
+          for attempt in $(seq 1 30); do
+            if response="$(docker exec oscraper-release-check wget -qO- http://127.0.0.1:3113/api/health 2>/dev/null)"; then
+              echo "${response}"
+              echo "${response}" | grep -q '"status":"ok"'
+              exit 0
+            fi
+            if [[ "$(docker inspect --format '{{.State.Running}}' oscraper-release-check)" != "true" ]]; then
+              docker logs oscraper-release-check
+              exit 1
+            fi
+            sleep 1
+          done
+          docker logs oscraper-release-check
+          exit 1
+
+  publish:
+    name: Publish ${{ needs.classify.outputs.channel }} image
+    needs: [classify, test, verify-image]
+    runs-on: ubuntu-latest
+    environment: ${{ needs.classify.outputs.environment }}
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.classify.outputs.tag }}
       - uses: docker/setup-qemu-action@v3
       - uses: docker/setup-buildx-action@v3
-      - uses: docker/login-action@v3
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      - uses: docker/metadata-action@v5
+      - name: Protect immutable version tag
+        shell: bash
+        env:
+          IMAGE: ghcr.io/${{ github.repository_owner }}/oscraper
+          VERSION: ${{ needs.classify.outputs.version }}
+        run: |
+          if docker buildx imagetools inspect "${IMAGE}:${VERSION}" >/dev/null 2>&1; then
+            echo "Image ${IMAGE}:${VERSION} already exists and will not be overwritten" >&2
+            exit 1
+          fi
+      - name: Generate image metadata
+        uses: docker/metadata-action@v5
         id: meta
         with:
-          images: ghcr.io/${{ github.repository }}
+          images: ghcr.io/${{ github.repository_owner }}/oscraper
+          flavor: |
+            latest=false
           tags: |
-            type=ref,event=tag
-            type=raw,value=latest
-      - uses: docker/build-push-action@v6
+            type=raw,value=${{ needs.classify.outputs.version }}
+            type=raw,value=beta,enable=${{ needs.classify.outputs.channel == 'beta' }}
+            type=semver,pattern={{major}}.{{minor}},value=${{ needs.classify.outputs.tag }},enable=${{ needs.classify.outputs.channel == 'production' }}
+            type=semver,pattern={{major}},value=${{ needs.classify.outputs.tag }},enable=${{ needs.classify.outputs.channel == 'production' }}
+            type=raw,value=latest,enable=${{ needs.classify.outputs.channel == 'production' }}
+            type=sha,prefix=sha-,format=long
+      - name: Build and publish multi-platform image
+        uses: docker/build-push-action@v6
+        id: build
         with:
           context: .
           file: deploy/Dockerfile
@@ -36,3 +200,28 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha,scope=oscraper-multi-platform
+          cache-to: type=gha,mode=max,scope=oscraper-multi-platform
+          provenance: mode=max
+          sbom: true
+      - name: Verify published manifest
+        shell: bash
+        env:
+          IMAGE: ghcr.io/${{ github.repository_owner }}/oscraper
+          VERSION: ${{ needs.classify.outputs.version }}
+        run: docker buildx imagetools inspect "${IMAGE}:${VERSION}"
+      - name: Write release summary
+        shell: bash
+        env:
+          CHANNEL: ${{ needs.classify.outputs.channel }}
+          DIGEST: ${{ steps.build.outputs.digest }}
+          IMAGE: ghcr.io/${{ github.repository_owner }}/oscraper
+          VERSION: ${{ needs.classify.outputs.version }}
+        run: |
+          {
+            echo "## OScraper image published"
+            echo
+            echo "- Channel: \`${CHANNEL}\`"
+            echo "- Image: \`${IMAGE}:${VERSION}\`"
+            echo "- Digest: \`${DIGEST}\`"
+          } >> "${GITHUB_STEP_SUMMARY}"
