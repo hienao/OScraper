@@ -35,7 +35,7 @@ func newSettingTestService(t *testing.T) (*SettingService, *gorm.DB) {
 
 func TestSaveScrapingEncryptsAndNeverReturnsAPIKey(t *testing.T) {
 	settings, db := newSettingTestService(t)
-	response, err := settings.SaveScraping(1, ScrapingSettingsRequest{
+	response, err := settings.SaveScraping(1, SaveScrapingSettingsCommand{
 		APIKey: "plain-secret", BaseURL: "https://api.themoviedb.org", ImageBaseURL: "https://image.tmdb.org",
 		Language: "zh-CN", Region: "CN", PosterSize: "w500", BackdropSize: "w1280", Timeout: 20,
 	})
@@ -52,7 +52,7 @@ func TestSaveScrapingEncryptsAndNeverReturnsAPIKey(t *testing.T) {
 	if stored.Value == "plain-secret" || !stored.IsSecret {
 		t.Fatalf("API key was not encrypted: %#v", stored)
 	}
-	_, err = settings.SaveScraping(1, ScrapingSettingsRequest{
+	_, err = settings.SaveScraping(1, SaveScrapingSettingsCommand{
 		BaseURL: "https://api.themoviedb.org", ImageBaseURL: "https://image.tmdb.org",
 		Language: "en-US", PosterSize: "w500", BackdropSize: "original", Timeout: 30,
 	})
@@ -67,7 +67,7 @@ func TestSaveScrapingEncryptsAndNeverReturnsAPIKey(t *testing.T) {
 
 func TestSaveScrapingRejectsInvalidLanguage(t *testing.T) {
 	settings, _ := newSettingTestService(t)
-	_, err := settings.SaveScraping(1, ScrapingSettingsRequest{
+	_, err := settings.SaveScraping(1, SaveScrapingSettingsCommand{
 		BaseURL: "https://api.themoviedb.org", ImageBaseURL: "https://image.tmdb.org",
 		Language: "chinese", PosterSize: "w500", BackdropSize: "w1280", Timeout: 20,
 	})

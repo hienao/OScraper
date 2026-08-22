@@ -6,6 +6,8 @@ import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { jobApi } from '@/api/services'
 import type { JobStatus, ScrapeJob } from '@/api/types'
+import { AppDialog } from '@/components/common/app-dialog'
+import { AppSelect } from '@/components/common/app-select'
 import { Message } from '@/components/common/message'
 import { Panel } from '@/components/common/panel'
 import { errorMessage } from '@/lib/error-message'
@@ -25,7 +27,7 @@ export function JobsPage() {
 
   return <div className="mx-auto max-w-7xl space-y-5 px-4 py-8 sm:px-6 lg:px-8">
     {notice && <Message variant="error">{notice}</Message>}
-    <Panel title={t('jobs.title')} description={t('jobs.description')} icon={<Activity size={20} />} action={<select className="rounded-lg border border-neutral-200 bg-white px-3 py-2 text-sm dark:border-neutral-800 dark:bg-neutral-950" value={status} onChange={(event) => setStatus(event.target.value as JobStatus | '')} aria-label={t('jobs.filter')}><option value="">{t('jobs.all')}</option>{(['pending', 'running', 'succeeded', 'failed', 'canceled'] as JobStatus[]).map((value) => <option key={value} value={value}>{t(`jobs.status.${value}`)}</option>)}</select>}>
+    <Panel title={t('jobs.title')} description={t('jobs.description')} icon={<Activity size={20} />} action={<AppSelect className="sm:w-44" value={status} onValueChange={(value) => setStatus(value as JobStatus | '')} ariaLabel={t('jobs.filter')} options={[{ value: '', label: t('jobs.all') }, ...(['pending', 'running', 'succeeded', 'failed', 'canceled'] as JobStatus[]).map((value) => ({ value, label: t(`jobs.status.${value}`) }))]} />}>
       {jobs.isLoading && <p className="text-sm text-neutral-500">{t('common.loading')}</p>}
       {jobs.error && <Message variant="error">{errorMessage(jobs.error, t('jobs.loadError'))}</Message>}
       {jobs.data?.items.length === 0 && <p className="py-12 text-center text-sm text-neutral-500">{t('jobs.empty')}</p>}
@@ -37,14 +39,11 @@ export function JobsPage() {
       </button>)}</div>
     </Panel>
 
-    {current && <div className="fixed inset-0 z-[70] grid place-items-center overflow-y-auto bg-neutral-950/60 p-4 backdrop-blur-sm" role="dialog" aria-modal="true" aria-labelledby="job-detail-title"><div className="app-panel my-8 w-full max-w-4xl p-6">
-      <div className="flex items-start justify-between gap-4"><div><h2 id="job-detail-title" className="text-xl font-bold">{t('jobs.jobNumber', { id: current.id })}</h2><p className="mt-1 text-sm text-neutral-500">{t(`jobs.status.${current.status}`)} · {t(`jobs.stage.${current.stage}`)} · {current.progress}%</p></div><Button variant="ghost" size="icon-md" aria-label={t('common.close')} onClick={() => setSelected(null)}><X size={20} /></Button></div>
-      {current.error_code && <div className="mt-4"><Message variant="error"><strong>{current.error_code}</strong><span className="mt-1 block">{current.error_message}</span></Message></div>}
+    {current && <AppDialog open={Boolean(current)} onOpenChange={(open) => { if (!open) setSelected(null) }} width="lg" closeLabel={t('common.close')} title={t('jobs.jobNumber', { id: current.id })} description={`${t(`jobs.status.${current.status}`)} · ${t(`jobs.stage.${current.stage}`)} · ${current.progress}%`} footer={<>{current.status === 'failed' && <Button className="gap-2" disabled={retry.isPending} onClick={() => retry.mutate(current.id)}><Refresh size={16} />{t('jobs.retry')}</Button>}{current.status === 'pending' && <Button variant="outline" disabled={cancel.isPending} onClick={() => cancel.mutate(current.id)}>{t('jobs.cancel')}</Button>}<Button variant="outline" className="gap-2" onClick={() => void operations.refetch()}><FileText size={16} />{t('common.refresh')}</Button></>}>
+      {current.error_code && <Message variant="error"><strong>{current.error_code}</strong><span className="mt-1 block">{current.error_message}</span></Message>}
       <div className="mt-5 grid gap-3 sm:grid-cols-3"><div className="rounded-xl bg-neutral-50 p-4 dark:bg-neutral-900"><p className="text-xs text-neutral-500">{t('jobs.attempts')}</p><p className="mt-1 text-xl font-bold">{current.attempts}</p></div><div className="rounded-xl bg-neutral-50 p-4 dark:bg-neutral-900"><p className="text-xs text-neutral-500">{t('jobs.checkpoint')}</p><p className="mt-1 text-xl font-bold">{current.checkpoint}</p></div><div className="rounded-xl bg-neutral-50 p-4 dark:bg-neutral-900"><p className="text-xs text-neutral-500">{t('jobs.preview')}</p><p className="mt-1 text-xl font-bold">#{current.preview_id}</p></div></div>
-      <h3 className="mt-6 font-semibold">{t('jobs.operations')}</h3>
-      {operations.isLoading && <p className="mt-3 text-sm text-neutral-500">{t('common.loading')}</p>}
+      <h3 className="mt-6 font-semibold">{t('jobs.operations')}</h3>{operations.isLoading && <p className="mt-3 text-sm text-neutral-500">{t('common.loading')}</p>}
       <div className="mt-3 max-h-[45vh] space-y-2 overflow-y-auto">{operations.data?.map((operation) => <div key={operation.id} className="rounded-xl border border-neutral-200 p-3 dark:border-neutral-800"><div className="flex items-center justify-between gap-3"><span className="flex items-center gap-2 text-sm font-medium">{operation.status === 'succeeded' || operation.status === 'skipped' ? <Check size={15} className="text-emerald-600" /> : operation.status === 'failed' ? <X size={15} className="text-red-600" /> : <Refresh size={15} className={operation.status === 'running' ? 'animate-spin' : ''} />}#{operation.sequence} · {operation.type}</span><Badge variant="outline">{t(`jobs.operationStatus.${operation.status}`)}</Badge></div>{operation.source_path && <p className="mt-2 break-all font-mono text-xs text-neutral-500">{operation.source_path}</p>}<p className="mt-1 break-all font-mono text-xs text-emerald-700 dark:text-emerald-300">→ {operation.target_path}</p>{operation.last_error && <p className="mt-2 text-xs text-red-600">{operation.last_error}</p>}</div>)}</div>
-      <div className="mt-6 flex flex-wrap justify-end gap-2">{current.status === 'failed' && <Button className="gap-2" disabled={retry.isPending} onClick={() => retry.mutate(current.id)}><Refresh size={16} />{t('jobs.retry')}</Button>}{current.status === 'pending' && <Button variant="outline" disabled={cancel.isPending} onClick={() => cancel.mutate(current.id)}>{t('jobs.cancel')}</Button>}<Button variant="outline" className="gap-2" onClick={() => void operations.refetch()}><FileText size={16} />{t('common.refresh')}</Button></div>
-    </div></div>}
+    </AppDialog>}
   </div>
 }

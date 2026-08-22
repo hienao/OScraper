@@ -1,62 +1,62 @@
 package router
 
 import (
+	"context"
 	"net/http"
-	"time"
 
 	"oscraper/config"
 	"oscraper/internal/handler"
 	"oscraper/internal/logging"
 	"oscraper/internal/middleware"
-	"oscraper/internal/openlist"
-	"oscraper/internal/provider/tmdb"
 	"oscraper/internal/service"
-	"oscraper/pkg/cryptoutil"
 	"oscraper/pkg/response"
 
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 )
 
-func Setup(cfg *config.Config, db *gorm.DB, logManager *logging.Manager, credentialCipher *cryptoutil.Cipher) *gin.Engine {
-	router, _ := SetupWithLifecycle(cfg, db, logManager, credentialCipher)
-	return router
+type HealthProvider func(context.Context) (report any, ready bool)
+
+type Dependencies struct {
+	Auth        *service.AuthService
+	Connections *service.ConnectionService
+	Targets     *service.TargetService
+	Catalog     *service.CatalogService
+	Settings    *service.SettingService
+	Previews    *service.PreviewService
+	Jobs        *service.JobService
+	Health      HealthProvider
 }
 
-func SetupWithLifecycle(cfg *config.Config, db *gorm.DB, logManager *logging.Manager, credentialCipher *cryptoutil.Cipher) (*gin.Engine, *service.JobService) {
+func New(cfg *config.Config, db *gorm.DB, logManager *logging.Manager, dependencies Dependencies) *gin.Engine {
 	gin.SetMode(cfg.GinMode)
 	router := gin.New()
 	router.Use(logging.RequestIDMiddleware(), logging.AccessLogMiddleware(logManager), gin.Recovery(), corsMiddleware())
 
-	authService := service.NewAuthService(cfg, db)
-	if err := authService.InitBootstrapAdmin(); err != nil {
-		panic("failed to initialize bootstrap administrator: " + err.Error())
-	}
-	openListClient := openlist.NewClient(time.Duration(cfg.HTTPTimeoutSeconds) * time.Second)
-	quota := service.NewConnectionQuota()
-	connectionService := service.NewConnectionService(db, credentialCipher, openListClient)
-	targetService := service.NewTargetService(db, credentialCipher, openListClient)
-	catalogService := service.NewCatalogService(db, credentialCipher, openListClient, quota)
-	tmdbClient := tmdb.NewClient()
-	settingService := service.NewSettingService(db, credentialCipher, tmdbClient)
-	previewService := service.NewPreviewService(db, settingService, tmdbClient, catalogService)
-	jobService, err := service.NewJobService(db, cfg, credentialCipher, openListClient, catalogService, quota)
-	if err != nil {
-		panic("failed to initialize scrape jobs: " + err.Error())
-	}
-
-	authHandler := handler.NewAuthHandler(authService)
-	connectionHandler := handler.NewConnectionHandler(connectionService)
-	targetHandler := handler.NewTargetHandler(targetService)
-	catalogHandler := handler.NewCatalogHandler(catalogService)
-	settingHandler := handler.NewSettingHandler(settingService)
-	previewHandler := handler.NewPreviewHandler(previewService)
-	jobHandler := handler.NewJobHandler(jobService)
+	authHandler := handler.NewAuthHandler(dependencies.Auth)
+	connectionHandler := handler.NewConnectionHandler(dependencies.Connections)
+	targetHandler := handler.NewTargetHandler(dependencies.Targets)
+	catalogHandler := handler.NewCatalogHandler(dependencies.Catalog)
+	settingHandler := handler.NewSettingHandler(dependencies.Settings)
+	previewHandler := handler.NewPreviewHandler(dependencies.Previews)
+	jobHandler := handler.NewJobHandler(dependencies.Jobs)
 	logHandler := handler.NewLogHandler(logManager, db)
 
-	router.GET("/api/health", func(c *gin.Context) {
-		response.Success(c, gin.H{"status": "ok", "time": time.Now().UTC()})
-	})
+	health := func(c *gin.Context) {
+		if dependencies.Health == nil {
+			response.Success(c, gin.H{"status": "ok"})
+			return
+		}
+		report, ready := dependencies.Health(c.Request.Context())
+		if !ready {
+			c.JSON(http.StatusServiceUnavailable, response.Response{Code: -1, ErrorCode: "health.not_ready", Message: "service is not ready", Data: report})
+			return
+		}
+		response.Success(c, report)
+	}
+	router.GET("/api/health", health)
+	router.GET("/api/health/ready", health)
+	router.GET("/api/health/live", func(c *gin.Context) { response.Success(c, gin.H{"status": "ok"}) })
 
 	api := router.Group("/api")
 	{
@@ -104,6 +104,12 @@ func SetupWithLifecycle(cfg *config.Config, db *gorm.DB, logManager *logging.Man
 			targets.POST("/:id/jobs", jobHandler.Submit)
 		}
 
+		localStorage := api.Group("/local-storage", middleware.JWTAuth(cfg, db), middleware.AdminSetupComplete(), middleware.AdminOnly())
+		{
+			localStorage.GET("/status", targetHandler.LocalStatus)
+			localStorage.GET("/tree", targetHandler.BrowseLocal)
+		}
+
 		jobs := api.Group("/scrape-jobs", middleware.JWTAuth(cfg, db), middleware.AdminSetupComplete(), middleware.AdminOnly())
 		{
 			jobs.GET("", jobHandler.List)
@@ -131,7 +137,7 @@ func SetupWithLifecycle(cfg *config.Config, db *gorm.DB, logManager *logging.Man
 	router.NoRoute(func(c *gin.Context) {
 		response.Error(c, http.StatusNotFound, "http.not_found", "Route not found")
 	})
-	return router, jobService
+	return router
 }
 
 func corsMiddleware() gin.HandlerFunc {

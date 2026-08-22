@@ -1,15 +1,12 @@
 package database
 
 import (
-	"errors"
-	"fmt"
 	"os"
 	"path/filepath"
 
 	"oscraper/config"
 	"oscraper/internal/model"
 
-	"gorm.io/driver/postgres"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
@@ -17,26 +14,14 @@ import (
 
 func Open(cfg *config.Config) (*gorm.DB, error) {
 	gormConfig := &gorm.Config{Logger: logger.Default.LogMode(logger.Error)}
-	var dialector gorm.Dialector
-	switch cfg.DBDriver {
-	case "sqlite":
-		if err := os.MkdirAll(filepath.Dir(cfg.SQLitePath), 0o755); err != nil {
-			return nil, err
-		}
-		dialector = sqlite.Open(cfg.SQLitePath)
-	case "postgres", "postgresql":
-		if cfg.DatabaseURL == "" {
-			return nil, fmt.Errorf("DATABASE_URL is required for postgres")
-		}
-		dialector = postgres.Open(cfg.DatabaseURL)
-	default:
-		return nil, fmt.Errorf("unsupported DB_DRIVER %q", cfg.DBDriver)
+	if err := os.MkdirAll(filepath.Dir(cfg.SQLitePath), 0o755); err != nil {
+		return nil, err
 	}
-	db, err := gorm.Open(dialector, gormConfig)
+	db, err := gorm.Open(sqlite.Open(cfg.SQLitePath), gormConfig)
 	if err != nil {
 		return nil, err
 	}
-	if c, err := db.DB(); err == nil && c != nil && cfg.DBDriver == "sqlite" {
+	if c, err := db.DB(); err == nil && c != nil {
 		c.SetMaxOpenConns(4)
 		_, _ = c.Exec("PRAGMA journal_mode=WAL")
 		_, _ = c.Exec("PRAGMA busy_timeout=5000")
@@ -51,23 +36,42 @@ func applyMigrations(db *gorm.DB) error {
 	if err := db.AutoMigrate(&model.SchemaMigration{}); err != nil {
 		return err
 	}
-	var migration model.SchemaMigration
-	err := db.First(&migration, 1).Error
-	if err == nil {
-		return nil
+	migrations := []struct {
+		version int
+		name    string
+		apply   func(*gorm.DB) error
+	}{
+		{version: 1, name: "initial_public_schema", apply: func(tx *gorm.DB) error {
+			return tx.AutoMigrate(
+				&model.User{}, &model.OpenListConnection{}, &model.ScrapeTarget{},
+				&model.ScanRun{}, &model.MediaCandidate{}, &model.ScrapePreview{},
+				&model.ScrapeJob{}, &model.ScrapeJobOperation{},
+				&model.SystemSetting{}, &model.AdminAuditLog{},
+			)
+		}},
+		{version: 2, name: "local_media_sources", apply: func(tx *gorm.DB) error {
+			return tx.AutoMigrate(&model.ScrapeTarget{}, &model.ScrapeJob{})
+		}},
+		{version: 3, name: "asynchronous_scan_runtime", apply: func(tx *gorm.DB) error {
+			return tx.AutoMigrate(&model.ScanRun{})
+		}},
 	}
-	if !errors.Is(err, gorm.ErrRecordNotFound) {
-		return err
-	}
-	return db.Transaction(func(tx *gorm.DB) error {
-		if err := tx.AutoMigrate(
-			&model.User{}, &model.OpenListConnection{}, &model.ScrapeTarget{},
-			&model.ScanRun{}, &model.MediaCandidate{}, &model.ScrapePreview{},
-			&model.ScrapeJob{}, &model.ScrapeJobOperation{},
-			&model.SystemSetting{}, &model.AdminAuditLog{},
-		); err != nil {
+	for _, migration := range migrations {
+		var count int64
+		if err := db.Model(&model.SchemaMigration{}).Where("version = ?", migration.version).Count(&count).Error; err != nil {
 			return err
 		}
-		return tx.Create(&model.SchemaMigration{Version: 1, Name: "initial_public_schema"}).Error
-	})
+		if count > 0 {
+			continue
+		}
+		if err := db.Transaction(func(tx *gorm.DB) error {
+			if err := migration.apply(tx); err != nil {
+				return err
+			}
+			return tx.Create(&model.SchemaMigration{Version: migration.version, Name: migration.name}).Error
+		}); err != nil {
+			return err
+		}
+	}
+	return nil
 }

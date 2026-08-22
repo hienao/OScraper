@@ -12,9 +12,9 @@
   text-rendering: optimizeLegibility;
 }
 
-html { min-width: 320px; min-height: 100%; }
+html { min-width: 0; min-height: 100%; }
 body {
-  min-width: 320px;
+  min-width: 0;
   min-height: 100vh;
   margin: 0;
   background:
@@ -24,7 +24,15 @@ body {
 }
 
 button, a, input { -webkit-tap-highlight-color: transparent; }
+body:has([role="dialog"][aria-modal="true"]) { overflow: hidden; }
 ::selection { color: white; background: #087f6b; }
+
+@media (max-width: 639px) {
+  button, a[href], select, input:not([type="checkbox"]):not([type="radio"]) {
+    min-height: 44px;
+  }
+  button { min-width: 44px; }
+}
 
 .app-panel {
   border: 1px solid color-mix(in srgb, var(--border) 82%, transparent);

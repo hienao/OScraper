@@ -15,11 +15,11 @@ func NewAuthHandler(authService *service.AuthService) *AuthHandler {
 }
 
 func (h *AuthHandler) Login(c *gin.Context) {
-	var request service.LoginRequest
+	var request loginRequest
 	if !bindJSON(c, &request) {
 		return
 	}
-	result, err := h.service.Login(request)
+	result, err := h.service.Login(request.command())
 	if err != nil {
 		logging.Warn("auth", "login failed", logging.Fields{"request_id": c.GetString("request_id"), "username": request.Username})
 		respondError(c, err)
@@ -30,11 +30,11 @@ func (h *AuthHandler) Login(c *gin.Context) {
 }
 
 func (h *AuthHandler) SetupAdmin(c *gin.Context) {
-	var request service.SetupAdminRequest
+	var request setupAdminRequest
 	if !bindJSON(c, &request) {
 		return
 	}
-	result, err := h.service.SetupAdmin(currentUserID(c), request)
+	result, err := h.service.SetupAdmin(currentUserID(c), request.command())
 	if err != nil {
 		respondError(c, err)
 		return
@@ -61,11 +61,11 @@ func (h *AuthHandler) Profile(c *gin.Context) {
 }
 
 func (h *AuthHandler) ChangePassword(c *gin.Context) {
-	var request service.ChangePasswordRequest
+	var request changePasswordRequest
 	if !bindJSON(c, &request) {
 		return
 	}
-	if err := h.service.ChangePassword(currentUserID(c), request); err != nil {
+	if err := h.service.ChangePassword(currentUserID(c), request.command()); err != nil {
 		respondError(c, err)
 		return
 	}

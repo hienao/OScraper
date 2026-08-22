@@ -1,15 +1,16 @@
 # OScraper
 
-A focused web application for scraping media directories stored in OpenList. The application uses a Go/Gin API and a React/TypeScript web interface, following the architecture and interaction conventions of Seshat and porting the safe, manually triggered OpenList scraping flow from ostrm.
+A focused web application for scraping media directories stored in OpenList or mounted locally below `/media`. The application uses a Go/Gin API and a React/TypeScript web interface, following the architecture and interaction conventions of Seshat and porting the safe, manually triggered scraping flow from ostrm.
 
 The current development slice includes:
 
 - one-time administrator bootstrap and JWT session revocation;
 - encrypted OpenList token storage;
 - OpenList connection CRUD and live `/api/me` validation;
+- local media status, safe directory browsing, scanning, rename, and metadata writes below `/media`;
 - scrape target CRUD with account-root and target-root path boundaries;
 - lazy OpenList directory browsing via `/api/fs/list`;
-- read-only recursive media scans for movie, TV, and anime targets;
+- persistent asynchronous read-only scans with bounded workers and restart recovery for movie, TV, and anime targets;
 - ostrm-compatible title/year, season/episode, anime absolute-episode, and TMDB ID parsing;
 - persistent scan runs, media candidates, directory fingerprints, and scan audit events;
 - encrypted TMDB configuration with live connectivity testing;
@@ -21,8 +22,9 @@ The current development slice includes:
 - overwrite-safe OpenList directory creation, move, rename, metadata upload, and final-path verification;
 - searchable scrape history and operation detail, plus searchable and CSV-exportable API/application/audit logs;
 - API, application, and administrator audit logs;
+- readiness/liveness health reports and scheduled retention cleanup without deleting audit logs;
 - a bilingual, responsive light/dark web interface;
-- SQLite by default with optional PostgreSQL support;
+- SQLite storage for a simple single-instance deployment;
 - a single Docker image served on port `3113`.
 
 The first release workflow is implemented end to end. See the [complete design](docs/design.md) and [operations guide](docs/operations.md).
@@ -48,7 +50,7 @@ Open <http://localhost:5173>. On a new database, sign in with `admin/admin` and 
 
 Development data is written below `backend/runtime`. Override `APP_DATA_DIR`, `APP_CACHE_DIR`, or `SERVER_PORT` when needed.
 
-The UI workflow is: create an OpenList connection → create a constrained scrape target → scan → select/correct the TMDB match → inspect the immutable plan → confirm execution → monitor the persistent job.
+The UI workflow is: choose OpenList or a local directory → create a constrained scrape target → scan → select/correct the TMDB match → inspect the immutable plan → confirm execution → monitor the persistent job.
 
 ## Docker
 
@@ -59,6 +61,14 @@ docker compose up -d --build
 ```
 
 Open <http://localhost:3113>. Persistent application data is mounted at `./runtime/data`; logs are mounted at `./runtime/cache`.
+
+Local scrape targets use the host directory configured by `HOST_MEDIA_DIR`, mounted read/write at `/media` in the container. For example:
+
+```env
+HOST_MEDIA_DIR=/mnt/nas/media
+```
+
+The application user must be able to read the directory for scans and write it for rename or metadata operations. Symbolic links inside local targets are deliberately ignored or rejected.
 
 Before upgrading or testing against real media, follow the backup and small-library gray-release procedure in [docs/operations.md](docs/operations.md).
 

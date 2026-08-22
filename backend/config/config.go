@@ -22,9 +22,8 @@ type Config struct {
 	ServerPort              string
 	AppDataDir              string
 	AppCacheDir             string
-	DBDriver                string
-	DatabaseURL             string
 	SQLitePath              string
+	LocalMediaRoot          string
 	JWTSecret               string
 	AccessTokenHours        int
 	CredentialEncryptionKey string
@@ -34,10 +33,13 @@ type Config struct {
 	HTTPTimeoutSeconds      int
 	ScrapeWorkers           int
 	ScrapeQueueSize         int
+	ScanWorkers             int
+	ScanQueueSize           int
 	JobWorkDir              string
 	MaxImageBytes           int64
 	JobRetentionDays        int
 	LogRetentionDays        int
+	DataRetentionDays       int
 }
 
 func Load() *Config {
@@ -55,9 +57,8 @@ func Load() *Config {
 		ServerPort:              getEnv("SERVER_PORT", defaultServerPort),
 		AppDataDir:              dataDir,
 		AppCacheDir:             cacheDir,
-		DBDriver:                strings.ToLower(getEnv("DB_DRIVER", "sqlite")),
-		DatabaseURL:             getEnv("DATABASE_URL", ""),
 		SQLitePath:              getEnv("SQLITE_PATH", filepath.Join(dataDir, "db", "openlist-scraper.db")),
+		LocalMediaRoot:          getEnv("LOCAL_MEDIA_ROOT", "/media"),
 		JWTSecret:               getEnv("JWT_SECRET", defaultDevJWTSecret),
 		AccessTokenHours:        getEnvInt("ACCESS_TOKEN_HOURS", defaultAccessTokenLifetime),
 		CredentialEncryptionKey: getEnv("CREDENTIAL_ENCRYPTION_KEY", defaultDevCredentialKey),
@@ -67,10 +68,13 @@ func Load() *Config {
 		HTTPTimeoutSeconds:      getEnvInt("HTTP_TIMEOUT_SECONDS", 20),
 		ScrapeWorkers:           getEnvInt("SCRAPE_WORKERS", 2),
 		ScrapeQueueSize:         getEnvInt("SCRAPE_QUEUE_SIZE", 100),
+		ScanWorkers:             getEnvInt("SCAN_WORKERS", 1),
+		ScanQueueSize:           getEnvInt("SCAN_QUEUE_SIZE", 20),
 		JobWorkDir:              getEnv("JOB_WORK_DIR", filepath.Join(dataDir, "work", "jobs")),
 		MaxImageBytes:           int64(getEnvInt("MAX_IMAGE_BYTES", 20<<20)),
 		JobRetentionDays:        getEnvInt("JOB_RETENTION_DAYS", 7),
 		LogRetentionDays:        getEnvInt("LOG_RETENTION_DAYS", 7),
+		DataRetentionDays:       getEnvInt("DATA_RETENTION_DAYS", 30),
 	}
 }
 
@@ -94,6 +98,12 @@ func (c *Config) Validate() error {
 	if c.ScrapeQueueSize < 1 || c.ScrapeQueueSize > 10000 {
 		return &ValidationError{Message: "SCRAPE_QUEUE_SIZE must be between 1 and 10000"}
 	}
+	if c.ScanWorkers < 1 || c.ScanWorkers > 4 {
+		return &ValidationError{Message: "SCAN_WORKERS must be between 1 and 4"}
+	}
+	if c.ScanQueueSize < 1 || c.ScanQueueSize > 1000 {
+		return &ValidationError{Message: "SCAN_QUEUE_SIZE must be between 1 and 1000"}
+	}
 	if c.MaxImageBytes < 1<<20 || c.MaxImageBytes > 100<<20 {
 		return &ValidationError{Message: "MAX_IMAGE_BYTES must be between 1 MiB and 100 MiB"}
 	}
@@ -102,6 +112,9 @@ func (c *Config) Validate() error {
 	}
 	if c.LogRetentionDays < 1 || c.LogRetentionDays > 30 {
 		return &ValidationError{Message: "LOG_RETENTION_DAYS must be between 1 and 30"}
+	}
+	if c.DataRetentionDays < 1 || c.DataRetentionDays > 365 {
+		return &ValidationError{Message: "DATA_RETENTION_DAYS must be between 1 and 365"}
 	}
 	return nil
 }

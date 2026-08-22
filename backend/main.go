@@ -10,8 +10,8 @@ import (
 	"time"
 
 	"oscraper/config"
+	"oscraper/internal/app"
 	"oscraper/internal/logging"
-	"oscraper/internal/router"
 	"oscraper/pkg/cryptoutil"
 	"oscraper/pkg/database"
 )
@@ -37,8 +37,11 @@ func main() {
 	logging.SetDefaultManager(logManager)
 	defer logging.SetDefaultManager(nil)
 
-	engine, jobService := router.SetupWithLifecycle(cfg, db, logManager, credentialCipher)
-	server := &http.Server{Addr: ":" + cfg.ServerPort, Handler: engine, ReadHeaderTimeout: 10 * time.Second}
+	application, err := app.New(cfg, db, logManager, credentialCipher)
+	if err != nil {
+		log.Fatalf("failed to initialize application: %v", err)
+	}
+	server := &http.Server{Addr: ":" + cfg.ServerPort, Handler: application.Engine, ReadHeaderTimeout: 10 * time.Second}
 	serverErrors := make(chan error, 1)
 	go func() { serverErrors <- server.ListenAndServe() }()
 	logging.Info("server", "OScraper started", logging.Fields{"port": cfg.ServerPort, "environment": cfg.AppEnv})
@@ -58,7 +61,7 @@ func main() {
 	if err := server.Shutdown(ctx); err != nil {
 		logging.Error("server", "graceful shutdown failed", logging.Fields{"error": err})
 	}
-	if err := jobService.Shutdown(ctx); err != nil {
-		logging.Error("job", "job shutdown timed out", logging.Fields{"error": err})
+	if err := application.Shutdown(ctx); err != nil {
+		logging.Error("server", "application shutdown timed out", logging.Fields{"error": err})
 	}
 }

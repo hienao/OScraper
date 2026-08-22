@@ -2,12 +2,13 @@
 
 ## 1. 上线前准备
 
-从旧名称升级时，默认 SQLite 文件 `openlist-scraper.db`、PostgreSQL 默认库名和浏览器存储键仍保留原值作为兼容标识，请勿仅因应用更名而手工改名或删除。
+从旧名称升级时，默认 SQLite 文件 `openlist-scraper.db` 和浏览器存储键仍保留原值作为兼容标识，请勿仅因应用更名而手工改名或删除。
 
 1. 从 `.env.example` 复制 `.env`，生成独立的 `JWT_SECRET` 与 32 字节 `CREDENTIAL_ENCRYPTION_KEY`。加密密钥一旦更换，已有 OpenList Token 和 TMDB Key 将无法解密。
-2. 默认 SQLite 适合单实例部署；不要让多个应用容器同时挂载同一个 SQLite 文件。多实例使用 PostgreSQL。
+2. 应用仅支持 SQLite 和单实例部署；不要让多个应用容器同时挂载或访问同一个 SQLite 文件。
 3. `/data` 保存业务数据库和作业工作区，`/cache` 保存可清理的 API/应用日志。审计日志位于业务数据库，不随日志保留期删除。
 4. OpenList Token 至少需要目标目录的读取、创建目录、移动、重命名和上传权限。建议使用只覆盖媒体库根目录的专用账号。
+5. 本地刮削通过 `HOST_MEDIA_DIR` 挂载到容器 `/media`；扫描需要读取权限，重命名和元数据写入需要写入权限。本地目标不跟随符号链接。
 
 关键参数：
 
@@ -15,9 +16,20 @@
 | --- | ---: | --- |
 | `SCRAPE_WORKERS` | 2 | 并发 Worker，允许 1–4；同一 OpenList 连接的写操作仍串行 |
 | `SCRAPE_QUEUE_SIZE` | 100 | 等待与运行作业的有界容量 |
+| `SCAN_WORKERS` | 1 | 目录扫描并发数，允许 1–4；与写作业 Worker 隔离 |
+| `SCAN_QUEUE_SIZE` | 20 | 等待与运行扫描的有界容量 |
 | `MAX_IMAGE_BYTES` | 20971520 | 单张图片上限，允许 1–100 MiB |
-| `JOB_RETENTION_DAYS` | 7 | 已遗留作业工作区保留天数，作业记录不会自动删除 |
+| `JOB_RETENTION_DAYS` | 7 | 遗留作业工作区保留天数 |
 | `LOG_RETENTION_DAYS` | 7 | API 与应用日志保留天数，允许 1–30 |
+| `DATA_RETENTION_DAYS` | 30 | 终态作业、过期预览、无引用候选项及扫描记录保留天数；审计日志不删除 |
+
+本地目录示例：
+
+```env
+HOST_MEDIA_DIR=/mnt/nas/media
+```
+
+容器内会看到 `/media/movies`、`/media/tv` 等子目录。不同本地刮削目标不能使用互相包含的根目录；本地写作业全局串行，且不支持跨文件系统移动。
 
 ## 2. 备份与恢复
 
@@ -31,7 +43,7 @@ docker compose start app
 
 恢复时停止应用，把备份中的 `runtime/data` 和原始 `.env`（尤其是加密密钥）恢复到同一路径，再启动应用。不要只恢复数据库而丢弃失败作业仍引用的 `/data/work/jobs`。
 
-PostgreSQL 部署使用 `pg_dump --format=custom` 和 `pg_restore --clean --if-exists`；同时单独备份 `/data/work/jobs` 与 `.env`。恢复后先访问 `/api/health`，再检查作业列表中是否有 `job.interrupted`，这些作业应由管理员确认后从检查点重试。
+恢复后先访问 `/api/health/ready`（就绪）和 `/api/health/live`（存活），再检查作业列表中是否有 `job.interrupted`，这些作业应由管理员确认后从检查点重试。健康报告同时包含 Job/扫描队列、日志丢弃计数、数据清理状态和本地挂载状态。
 
 ## 3. 升级与回退
 
@@ -61,7 +73,10 @@ PostgreSQL 部署使用 `pg_dump --format=custom` 和 `pg_restore --clean --if-e
 - `job.target_exists`：目标路径已被占用；人工检查后重新规划，应用不会覆盖媒体。
 - `job.interrupted`：进程退出导致；确认 OpenList 当前状态后从作业页重试。
 - `job.queue_full`：等待现有作业结束，或在评估 OpenList 限流后提高队列；提高 Worker 不会绕过单连接串行保护。
+- `scan.queue_full`：等待现有目录扫描结束，或调整独立的 `SCAN_QUEUE_SIZE`；扫描任务已持久化，进程重启后会继续处理未完成任务。
 - `job.invalid_image_type` / `job.image_too_large`：检查 TMDB 图片代理响应和 `MAX_IMAGE_BYTES`。
-- SQLite `busy/locked`：确认只有一个应用实例访问文件，存储支持文件锁；需要多实例时迁移到 PostgreSQL。
+- SQLite `busy/locked`：确认只有一个应用实例访问文件，并确认挂载存储支持文件锁；本应用不支持多实例共享数据库。
+- `local.not_mounted` / `local.permission_denied`：检查 `HOST_MEDIA_DIR` 是否正确挂载，以及容器用户对宿主机目录的 UID/GID 和权限。
+- `local.cross_device_move`：源和目标落在不同文件系统；首版不会自动复制后删除，请调整挂载或目标目录。
 
 应用收到 SIGTERM 后会停止接收新 HTTP 请求并等待作业退出，最长 10 秒。尚未安全结束的作业会在下次启动时标记为可重试。

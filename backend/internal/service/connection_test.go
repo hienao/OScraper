@@ -36,7 +36,7 @@ func TestCreateConnectionEncryptsTokenAndReturnsMask(t *testing.T) {
 		t.Fatal(err)
 	}
 	connectionService := NewConnectionService(db, cipher, stubOpenListTester{identity: &openlist.Identity{Username: "alice", BasePath: "/media"}})
-	created, err := connectionService.Create(context.Background(), 1, ConnectionRequest{
+	created, err := connectionService.Create(context.Background(), 1, CreateConnectionCommand{
 		Name: "Home", BaseURL: "http://openlist.example:5244/", Token: "plain-token", QPSLimit: 5, QPMLimit: 120,
 	})
 	if err != nil {

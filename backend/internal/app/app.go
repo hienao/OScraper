@@ -1,0 +1,120 @@
+package app
+
+import (
+	"context"
+	"errors"
+	"time"
+
+	"oscraper/config"
+	"oscraper/internal/logging"
+	"oscraper/internal/maintenance"
+	"oscraper/internal/openlist"
+	"oscraper/internal/provider/tmdb"
+	"oscraper/internal/router"
+	"oscraper/internal/service"
+	"oscraper/pkg/cryptoutil"
+
+	"github.com/gin-gonic/gin"
+	"gorm.io/gorm"
+)
+
+type ComponentHealth struct {
+	OK      bool `json:"ok"`
+	Details any  `json:"details,omitempty"`
+}
+
+type HealthReport struct {
+	Status     string                     `json:"status"`
+	Time       time.Time                  `json:"time"`
+	Components map[string]ComponentHealth `json:"components"`
+}
+
+type App struct {
+	Engine      *gin.Engine
+	Jobs        *service.JobService
+	Catalog     *service.CatalogService
+	Maintenance *maintenance.Service
+	targets     *service.TargetService
+	db          *gorm.DB
+	logs        *logging.Manager
+	cancel      context.CancelFunc
+}
+
+func New(cfg *config.Config, db *gorm.DB, logs *logging.Manager, cipher *cryptoutil.Cipher) (*App, error) {
+	rootCtx, cancel := context.WithCancel(context.Background())
+	openListClient := openlist.NewClient(time.Duration(cfg.HTTPTimeoutSeconds) * time.Second)
+	quota := service.NewConnectionQuota()
+	authService := service.NewAuthService(cfg, db)
+	if err := authService.InitBootstrapAdmin(); err != nil {
+		cancel()
+		return nil, err
+	}
+	connectionService := service.NewConnectionService(db, cipher, openListClient)
+	targetService := service.NewTargetService(db, cipher, openListClient, cfg.LocalMediaRoot)
+	catalogService := service.NewCatalogServiceWithRuntime(db, cipher, openListClient, quota, cfg.LocalMediaRoot, cfg.ScanWorkers, cfg.ScanQueueSize)
+	if err := catalogService.Start(); err != nil {
+		cancel()
+		return nil, err
+	}
+	tmdbClient := tmdb.NewClient()
+	settingService := service.NewSettingService(db, cipher, tmdbClient)
+	previewService := service.NewPreviewService(db, settingService, tmdbClient, catalogService)
+	jobService, err := service.NewJobService(db, cfg, cipher, openListClient, catalogService, quota)
+	if err != nil {
+		cancel()
+		_ = catalogService.Shutdown(context.Background())
+		return nil, err
+	}
+	maintenanceService := maintenance.New(db, cfg.DataRetentionDays)
+	if err := maintenanceService.Start(rootCtx); err != nil {
+		cancel()
+		_ = jobService.Shutdown(context.Background())
+		_ = catalogService.Shutdown(context.Background())
+		return nil, err
+	}
+	application := &App{Jobs: jobService, Catalog: catalogService, Maintenance: maintenanceService, targets: targetService, db: db, logs: logs, cancel: cancel}
+	application.Engine = router.New(cfg, db, logs, router.Dependencies{
+		Auth: authService, Connections: connectionService, Targets: targetService, Catalog: catalogService,
+		Settings: settingService, Previews: previewService, Jobs: jobService, Health: application.Health,
+	})
+	return application, nil
+}
+
+func (a *App) Health(ctx context.Context) (any, bool) {
+	businessOK := ping(ctx, a.db)
+	logsOK := a.logs != nil && ping(ctx, a.logs.DB)
+	var logDetails any
+	if a.logs != nil {
+		logDetails = a.logs.Stats()
+	}
+	local := a.targets.LocalStatus()
+	ready := businessOK && logsOK
+	status := "ok"
+	if !ready {
+		status = "degraded"
+	}
+	return HealthReport{
+		Status: status, Time: time.Now().UTC(),
+		Components: map[string]ComponentHealth{
+			"database":    {OK: businessOK},
+			"logging":     {OK: logsOK, Details: logDetails},
+			"jobs":        {OK: true, Details: a.Jobs.Metrics()},
+			"scans":       {OK: true, Details: a.Catalog.Metrics()},
+			"maintenance": {OK: a.Maintenance.Status().LastError == "", Details: a.Maintenance.Status()},
+			"local_media": {OK: local.Mounted && local.Readable, Details: local},
+		},
+	}, ready
+}
+
+func (a *App) Shutdown(ctx context.Context) error {
+	a.cancel()
+	return errors.Join(a.Catalog.Shutdown(ctx), a.Jobs.Shutdown(ctx), a.Maintenance.Shutdown(ctx))
+}
+
+func ping(ctx context.Context, db *gorm.DB) bool {
+	if db == nil {
+		return false
+	}
+	sqlDB, err := db.DB()
+	return err == nil && sqlDB.PingContext(ctx) == nil
+}

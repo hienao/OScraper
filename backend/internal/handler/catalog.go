@@ -20,12 +20,12 @@ func (h *CatalogHandler) Scan(c *gin.Context) {
 	if !ok {
 		return
 	}
-	result, err := h.service.Scan(c.Request.Context(), id, currentUserID(c), c.Query("refresh") == "true")
+	result, err := h.service.StartScan(id, currentUserID(c), c.Query("refresh") == "true")
 	if err != nil {
 		respondError(c, err)
 		return
 	}
-	response.Created(c, result)
+	response.Accepted(c, result)
 }
 
 func (h *CatalogHandler) GetScan(c *gin.Context) {

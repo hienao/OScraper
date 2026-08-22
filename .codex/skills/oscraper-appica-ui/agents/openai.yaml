@@ -1,0 +1,4 @@
+interface:
+  display_name: "OScraper Appica UI"
+  short_description: "Enforce Appica UI conventions in OScraper frontend"
+  default_prompt: "Use $oscraper-appica-ui to implement this OScraper frontend UI change consistently."

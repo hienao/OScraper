@@ -1,5 +1,5 @@
 import { apiRequest } from './client'
-import type { APIRequestLog, ApplicationLog, AuditLog, ConnectionTestResult, CreateConnectionInput, DirectoryLevel, JobStatus, MediaCandidate, OpenListConnection, Page, ScanRun, ScrapeJob, ScrapeJobOperation, ScrapePreview, ScrapingSettings, ScrapingSettingsInput, ScrapeTarget, TargetInput, TMDBSearchResult, TokenResponse, UpdateConnectionInput, User } from './types'
+import type { APIRequestLog, ApplicationLog, AuditLog, ConnectionTestResult, CreateConnectionInput, DirectoryLevel, JobStatus, LocalStorageStatus, MediaCandidate, OpenListConnection, Page, ScanRun, ScrapeJob, ScrapeJobOperation, ScrapePreview, ScrapingSettings, ScrapingSettingsInput, ScrapeTarget, TargetInput, TMDBSearchResult, TokenResponse, UpdateConnectionInput, User } from './types'
 
 export const authApi = {
   login: (body: { username: string; password: string }) => apiRequest<TokenResponse>('/api/auth/login', { method: 'POST', body, auth: false }),
@@ -31,6 +31,11 @@ export const targetApi = {
   scan: (id: number, refresh = true) => apiRequest<ScanRun>(`/api/scrape-targets/${id}/scans?refresh=${refresh}`, { method: 'POST' }),
   scanResult: (id: number, scanId: number) => apiRequest<ScanRun>(`/api/scrape-targets/${id}/scans/${scanId}`),
   candidates: (id: number, scanId?: number) => apiRequest<MediaCandidate[]>(`/api/scrape-targets/${id}/candidates${scanId ? `?scan_id=${scanId}` : ''}`),
+}
+
+export const localStorageApi = {
+  status: () => apiRequest<LocalStorageStatus>('/api/local-storage/status'),
+  tree: (path?: string) => apiRequest<DirectoryLevel>(`/api/local-storage/tree${path ? `?${new URLSearchParams({ path })}` : ''}`),
 }
 
 export const settingsApi = {

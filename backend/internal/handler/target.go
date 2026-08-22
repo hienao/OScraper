@@ -39,11 +39,11 @@ func (h *TargetHandler) Get(c *gin.Context) {
 }
 
 func (h *TargetHandler) Create(c *gin.Context) {
-	var request service.TargetRequest
+	var request targetRequest
 	if !bindJSON(c, &request) {
 		return
 	}
-	target, err := h.service.Create(c.Request.Context(), currentUserID(c), request)
+	target, err := h.service.Create(c.Request.Context(), currentUserID(c), request.command())
 	if err != nil {
 		respondError(c, err)
 		return
@@ -58,11 +58,11 @@ func (h *TargetHandler) Update(c *gin.Context) {
 	if !ok {
 		return
 	}
-	var request service.TargetRequest
+	var request targetRequest
 	if !bindJSON(c, &request) {
 		return
 	}
-	target, err := h.service.Update(c.Request.Context(), id, currentUserID(c), request)
+	target, err := h.service.Update(c.Request.Context(), id, currentUserID(c), request.command())
 	if err != nil {
 		respondError(c, err)
 		return
@@ -88,6 +88,19 @@ func (h *TargetHandler) Browse(c *gin.Context) {
 		return
 	}
 	level, err := h.service.Browse(c.Request.Context(), id, c.Query("path"), c.Query("refresh") == "true")
+	if err != nil {
+		respondError(c, err)
+		return
+	}
+	response.Success(c, level)
+}
+
+func (h *TargetHandler) LocalStatus(c *gin.Context) {
+	response.Success(c, h.service.LocalStatus())
+}
+
+func (h *TargetHandler) BrowseLocal(c *gin.Context) {
+	level, err := h.service.BrowseLocal(c.Request.Context(), c.Query("path"))
 	if err != nil {
 		respondError(c, err)
 		return

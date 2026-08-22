@@ -6,6 +6,7 @@ import { useEffect, useState, type FormEvent } from 'react'
 import { useTranslation } from 'react-i18next'
 import { settingsApi } from '@/api/services'
 import type { ScrapingSettingsInput } from '@/api/types'
+import { AppSelect } from '@/components/common/app-select'
 import { FormField } from '@/components/common/form-field'
 import { Message } from '@/components/common/message'
 import { Panel } from '@/components/common/panel'
@@ -66,8 +67,8 @@ export function SettingsPage() {
             <FormField label={t('settings.imageBaseUrl')}><Input type="url" value={form.image_base_url} onChange={(event) => setForm({ ...form, image_base_url: event.target.value })} required /></FormField>
             <FormField label={t('settings.language')} description={t('settings.languageHint')}><Input value={form.language} onChange={(event) => setForm({ ...form, language: event.target.value })} placeholder="zh-CN" required /></FormField>
             <FormField label={t('settings.region')} description={t('settings.regionHint')}><Input value={form.region} onChange={(event) => setForm({ ...form, region: event.target.value.toUpperCase() })} placeholder="CN" maxLength={2} /></FormField>
-            <FormField label={t('settings.posterSize')}><select className="h-10 w-full rounded-lg border border-neutral-300 bg-transparent px-3 text-sm dark:border-neutral-700" value={form.poster_size} onChange={(event) => setForm({ ...form, poster_size: event.target.value })}><option value="w342">w342</option><option value="w500">w500</option><option value="w780">w780</option><option value="original">original</option></select></FormField>
-            <FormField label={t('settings.backdropSize')}><select className="h-10 w-full rounded-lg border border-neutral-300 bg-transparent px-3 text-sm dark:border-neutral-700" value={form.backdrop_size} onChange={(event) => setForm({ ...form, backdrop_size: event.target.value })}><option value="w780">w780</option><option value="w1280">w1280</option><option value="original">original</option></select></FormField>
+            <FormField label={t('settings.posterSize')}><AppSelect value={form.poster_size} onValueChange={(poster_size) => setForm({ ...form, poster_size })} ariaLabel={t('settings.posterSize')} options={['w342', 'w500', 'w780', 'original'].map((value) => ({ value, label: value }))} /></FormField>
+            <FormField label={t('settings.backdropSize')}><AppSelect value={form.backdrop_size} onValueChange={(backdrop_size) => setForm({ ...form, backdrop_size })} ariaLabel={t('settings.backdropSize')} options={['w780', 'w1280', 'original'].map((value) => ({ value, label: value }))} /></FormField>
             <FormField label={t('settings.timeout')}><Input type="number" min={1} max={120} value={form.timeout_seconds} onChange={(event) => setForm({ ...form, timeout_seconds: Number(event.target.value) })} required /></FormField>
           </div>
           <div className="flex flex-wrap justify-end gap-2">

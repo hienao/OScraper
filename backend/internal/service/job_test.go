@@ -133,9 +133,11 @@ func newJobTestService(t *testing.T, remote *memoryOpenList) (*JobService, *gorm
 	if err := db.Create(&connection).Error; err != nil {
 		t.Fatal(err)
 	}
-	target := model.ScrapeTarget{ConnectionID: connection.ID, Name: "Movies", RootPath: "/movies", LibraryType: "movie", RenameEnabled: true, Enabled: true}
+	connectionID := connection.ID
+	target := model.ScrapeTarget{SourceType: "openlist", ConnectionID: &connectionID, Name: "Movies", RootPath: "/movies", LibraryType: "movie", RenameEnabled: true, Enabled: true}
 	_ = db.Create(&target).Error
-	scan := model.ScanRun{TargetID: target.ID, Status: "succeeded", StartedAt: time.Now()}
+	startedAt := time.Now()
+	scan := model.ScanRun{TargetID: target.ID, Status: "succeeded", StartedAt: &startedAt}
 	_ = db.Create(&scan).Error
 	candidate := model.MediaCandidate{ScanID: scan.ID, TargetID: target.ID, Path: "/movies/Arrival.mkv", Kind: "movie", Fingerprint: "sha256:fresh", RepresentativeFile: "Arrival.mkv", Status: "ready", VideoCount: 1}
 	_ = db.Create(&candidate).Error
@@ -181,7 +183,7 @@ func waitJob(t *testing.T, service *JobService, id uint) *model.ScrapeJob {
 func TestJobExecutesAndVerifiesFlatMoviePlan(t *testing.T) {
 	remote := &memoryOpenList{entries: map[string]bool{"/movies/Arrival.mkv": false}}
 	service, _, preview := newJobTestService(t, remote)
-	job, err := service.Submit(1, 1, SubmitJobRequest{PreviewID: preview.ID, RenameMedia: true, ConfirmDirectoryFingerprint: preview.Fingerprint}, "same-request")
+	job, err := service.Submit(1, 1, SubmitJobCommand{PreviewID: preview.ID, RenameMedia: true, ConfirmDirectoryFingerprint: preview.Fingerprint}, "same-request")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -196,7 +198,7 @@ func TestJobExecutesAndVerifiesFlatMoviePlan(t *testing.T) {
 	if !videoExists || !nfoExists {
 		t.Fatalf("final OpenList state is incomplete: %#v", remote.entries)
 	}
-	same, err := service.Submit(1, 1, SubmitJobRequest{PreviewID: preview.ID, RenameMedia: true, ConfirmDirectoryFingerprint: preview.Fingerprint}, "same-request")
+	same, err := service.Submit(1, 1, SubmitJobCommand{PreviewID: preview.ID, RenameMedia: true, ConfirmDirectoryFingerprint: preview.Fingerprint}, "same-request")
 	if err != nil || same.ID != job.ID {
 		t.Fatalf("idempotency key did not return the original job: %#v %v", same, err)
 	}
@@ -205,7 +207,7 @@ func TestJobExecutesAndVerifiesFlatMoviePlan(t *testing.T) {
 func TestFailedUploadRetriesFromOperationCheckpoint(t *testing.T) {
 	remote := &memoryOpenList{entries: map[string]bool{"/movies/Arrival.mkv": false}, failUploadOnce: true}
 	service, _, preview := newJobTestService(t, remote)
-	job, err := service.Submit(1, 1, SubmitJobRequest{PreviewID: preview.ID, RenameMedia: true, ConfirmDirectoryFingerprint: preview.Fingerprint}, "")
+	job, err := service.Submit(1, 1, SubmitJobCommand{PreviewID: preview.ID, RenameMedia: true, ConfirmDirectoryFingerprint: preview.Fingerprint}, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -220,6 +222,71 @@ func TestFailedUploadRetriesFromOperationCheckpoint(t *testing.T) {
 	retried = waitJob(t, service, retried.ID)
 	if retried.Status != "succeeded" || retried.Attempts != 2 || remote.uploadCalls != 2 {
 		t.Fatalf("retry did not resume safely: %#v uploads=%d", retried, remote.uploadCalls)
+	}
+}
+
+func TestLocalJobRenamesMediaAndWritesMetadata(t *testing.T) {
+	root := t.TempDir()
+	library := filepath.Join(root, "movies")
+	if err := os.MkdirAll(library, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	sourceVideo := filepath.Join(library, "Arrival.mkv")
+	if err := os.WriteFile(sourceVideo, []byte("video"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	db, err := gorm.Open(sqlite.Open(fmt.Sprintf("file:local-job-%s?mode=memory&cache=shared", t.Name())), &gorm.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.AutoMigrate(&model.OpenListConnection{}, &model.ScrapeTarget{}, &model.ScanRun{}, &model.MediaCandidate{}, &model.ScrapePreview{}, &model.ScrapeJob{}, &model.ScrapeJobOperation{}, &model.AdminAuditLog{}); err != nil {
+		t.Fatal(err)
+	}
+	target := model.ScrapeTarget{SourceType: "local", Name: "Local movies", RootPath: filepath.ToSlash(library), LibraryType: "movie", RenameEnabled: true, Enabled: true}
+	if err := db.Create(&target).Error; err != nil {
+		t.Fatal(err)
+	}
+	startedAt := time.Now()
+	scan := model.ScanRun{TargetID: target.ID, Status: "succeeded", StartedAt: &startedAt}
+	_ = db.Create(&scan).Error
+	candidate := model.MediaCandidate{ScanID: scan.ID, TargetID: target.ID, Path: filepath.ToSlash(sourceVideo), Kind: "movie", Fingerprint: "sha256:local", RepresentativeFile: "Arrival.mkv", Status: "ready", VideoCount: 1}
+	_ = db.Create(&candidate).Error
+	finalRoot := filepath.ToSlash(filepath.Join(library, "Arrival (2016) {tmdbid-329865}"))
+	finalVideo := finalRoot + "/Arrival (2016) {tmdbid-329865}.mkv"
+	finalNFO := finalRoot + "/Arrival (2016) {tmdbid-329865}.nfo"
+	plan := PreviewPlan{
+		ReadOnly: true, Ready: true, RenameAllowed: true, OrganizeFlatMovie: true, SourcePath: candidate.Path,
+		ProposedDirectoryName: path.Base(finalRoot), ProposedDirectoryPath: finalRoot,
+		ProposedDirectoryCreates: []string{finalRoot}, ProposedDirectoryRenames: []RenameItem{},
+		ProposedFileRenames: []RenameItem{{SourcePath: candidate.Path, TargetPath: finalVideo, AssetType: "video"}},
+		Artifacts:           []PreviewArtifact{{Path: finalNFO, Kind: "nfo", Content: "<movie><title>Arrival</title></movie>"}},
+		GeneratedFiles:      []string{finalNFO}, Warnings: []string{}, Conflicts: []PlanConflict{},
+	}
+	planJSON, _ := json.Marshal(plan)
+	preview := model.ScrapePreview{TargetID: target.ID, CandidateID: candidate.ID, ActorID: 1, TMDBID: 329865, MediaType: "movie", Fingerprint: candidate.Fingerprint, MatchJSON: `{}`, PlanJSON: string(planJSON), ExpiresAt: time.Now().Add(time.Hour)}
+	_ = db.Create(&preview).Error
+	inspector := stubCandidateInspector{inspection: &CandidateInspection{Candidate: &candidate, Fingerprint: candidate.Fingerprint}}
+	cipher, _ := cryptoutil.New("0123456789abcdef0123456789abcdef")
+	cfg := &config.Config{SQLitePath: filepath.Join(root, "db.sqlite"), LocalMediaRoot: root, JobWorkDir: filepath.Join(root, "jobs"), ScrapeWorkers: 1, ScrapeQueueSize: 2, MaxImageBytes: 2 << 20}
+	service, err := NewJobService(db, cfg, cipher, &memoryOpenList{}, inspector, NewConnectionQuota())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = service.Shutdown(context.Background()) })
+	job, err := service.Submit(target.ID, 1, SubmitJobCommand{PreviewID: preview.ID, RenameMedia: true, ConfirmDirectoryFingerprint: preview.Fingerprint}, "local-job")
+	if err != nil {
+		t.Fatal(err)
+	}
+	job = waitJob(t, service, job.ID)
+	if job.Status != "succeeded" {
+		t.Fatalf("local job failed: %#v", job)
+	}
+	if _, err := os.Stat(filepath.FromSlash(finalVideo)); err != nil {
+		t.Fatalf("renamed local video is missing: %v", err)
+	}
+	data, err := os.ReadFile(filepath.FromSlash(finalNFO))
+	if err != nil || !strings.Contains(string(data), "Arrival") {
+		t.Fatalf("local NFO is missing: %q %v", data, err)
 	}
 }
 
@@ -239,9 +306,9 @@ func TestDownloadImageStreamsOnlySupportedBoundedContent(t *testing.T) {
 	}))
 	defer server.Close()
 
-	service := &JobService{maxImage: 4, imageClient: server.Client()}
+	executor := &JobExecutor{maxImage: 4, imageClient: server.Client()}
 	destination := filepath.Join(t.TempDir(), "poster.png")
-	contentType, err := service.downloadImage(context.Background(), server.URL+"/valid", destination)
+	contentType, err := executor.downloadImage(context.Background(), server.URL+"/valid", destination)
 	if err != nil || contentType != "image/png" {
 		t.Fatalf("valid image failed: type=%q err=%v", contentType, err)
 	}
@@ -249,7 +316,7 @@ func TestDownloadImageStreamsOnlySupportedBoundedContent(t *testing.T) {
 		t.Fatalf("unexpected downloaded content %q: %v", content, err)
 	}
 	for _, test := range []struct{ route, code string }{{"/invalid", "job.invalid_image_type"}, {"/large", "job.image_too_large"}} {
-		_, err := service.downloadImage(context.Background(), server.URL+test.route, destination+strings.ReplaceAll(test.route, "/", "-"))
+		_, err := executor.downloadImage(context.Background(), server.URL+test.route, destination+strings.ReplaceAll(test.route, "/", "-"))
 		var serviceError *Error
 		if !errors.As(err, &serviceError) || serviceError.Code != test.code {
 			t.Fatalf("%s returned %v, want %s", test.route, err, test.code)

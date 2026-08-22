@@ -18,11 +18,11 @@ func (h *PreviewHandler) Search(c *gin.Context) {
 	if !ok {
 		return
 	}
-	var request service.PreviewSearchRequest
+	var request previewSearchRequest
 	if !bindJSON(c, &request) {
 		return
 	}
-	results, err := h.service.Search(c.Request.Context(), targetIDValue, request)
+	results, err := h.service.Search(c.Request.Context(), targetIDValue, request.command())
 	if err != nil {
 		respondError(c, err)
 		return
@@ -35,11 +35,11 @@ func (h *PreviewHandler) Create(c *gin.Context) {
 	if !ok {
 		return
 	}
-	var request service.CreatePreviewRequest
+	var request createPreviewRequest
 	if !bindJSON(c, &request) {
 		return
 	}
-	preview, err := h.service.Create(c.Request.Context(), targetIDValue, currentUserID(c), request)
+	preview, err := h.service.Create(c.Request.Context(), targetIDValue, currentUserID(c), request.command())
 	if err != nil {
 		respondError(c, err)
 		return

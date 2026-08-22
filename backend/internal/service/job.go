@@ -36,10 +36,10 @@ type OpenListMutator interface {
 
 var errOperationSkipped = errors.New("operation already applied")
 
-type SubmitJobRequest struct {
-	PreviewID                   uint   `json:"preview_id" binding:"required"`
-	RenameMedia                 bool   `json:"rename_media"`
-	ConfirmDirectoryFingerprint string `json:"confirm_directory_fingerprint" binding:"required,max=80"`
+type SubmitJobCommand struct {
+	PreviewID                   uint
+	RenameMedia                 bool
+	ConfirmDirectoryFingerprint string
 }
 
 type JobPage struct {
@@ -50,6 +50,23 @@ type JobPage struct {
 }
 
 type JobService struct {
+	jobs     *repository.JobRepository
+	previews *repository.PreviewRepository
+	targets  *repository.TargetRepository
+	audit    *repository.AuditRepository
+	local    *localStorage
+	executor *JobExecutor
+	rootCtx  context.Context
+	cancel   context.CancelFunc
+	slots    chan struct{}
+	workers  chan struct{}
+	wait     sync.WaitGroup
+	submitMu sync.Mutex
+}
+
+// JobExecutor owns storage mutation and artifact execution. JobService only
+// coordinates application use cases and the bounded persistent queue.
+type JobExecutor struct {
 	jobs        *repository.JobRepository
 	previews    *repository.PreviewRepository
 	targets     *repository.TargetRepository
@@ -61,14 +78,15 @@ type JobService struct {
 	quota       *ConnectionQuota
 	workDir     string
 	maxImage    int64
-	rootCtx     context.Context
-	cancel      context.CancelFunc
-	slots       chan struct{}
-	workers     chan struct{}
-	wait        sync.WaitGroup
-	submitMu    sync.Mutex
 	locks       sync.Map
 	imageClient *http.Client
+	local       *localStorage
+}
+
+type jobSource struct {
+	connection *model.OpenListConnection
+	token      string
+	local      *localStorage
 }
 
 func NewJobService(db *gorm.DB, cfg *config.Config, cipher *cryptoutil.Cipher, client OpenListMutator, catalog CandidateInspector, quota *ConnectionQuota) (*JobService, error) {
@@ -94,13 +112,16 @@ func NewJobService(db *gorm.DB, cfg *config.Config, cipher *cryptoutil.Cipher, c
 	if quota == nil {
 		quota = NewConnectionQuota()
 	}
-	service := &JobService{
-		jobs: repository.NewJobRepository(db), previews: repository.NewPreviewRepository(db), targets: repository.NewTargetRepository(db),
-		connections: repository.NewConnectionRepository(db), catalog: catalog, audit: repository.NewAuditRepository(db), cipher: cipher,
-		client: client, quota: quota, workDir: workDir, maxImage: maxImage, rootCtx: rootCtx, cancel: cancel,
-		slots: make(chan struct{}, workers+queueSize), workers: make(chan struct{}, workers),
+	jobs := repository.NewJobRepository(db)
+	previews := repository.NewPreviewRepository(db)
+	targets := repository.NewTargetRepository(db)
+	audit := repository.NewAuditRepository(db)
+	local := newLocalStorage(cfg.LocalMediaRoot)
+	executor := &JobExecutor{
+		jobs: jobs, previews: previews, targets: targets, connections: repository.NewConnectionRepository(db), catalog: catalog,
+		audit: audit, cipher: cipher, client: client, quota: quota, workDir: workDir, maxImage: maxImage, local: local,
 	}
-	service.imageClient = &http.Client{
+	executor.imageClient = &http.Client{
 		Timeout: time.Duration(cfg.HTTPTimeoutSeconds) * time.Second,
 		CheckRedirect: func(request *http.Request, via []*http.Request) error {
 			if len(via) >= 3 {
@@ -108,6 +129,10 @@ func NewJobService(db *gorm.DB, cfg *config.Config, cipher *cryptoutil.Cipher, c
 			}
 			return openlist.ValidateEndpoint(request.Context(), request.URL)
 		},
+	}
+	service := &JobService{
+		jobs: jobs, previews: previews, targets: targets, audit: audit, local: local, executor: executor,
+		rootCtx: rootCtx, cancel: cancel, slots: make(chan struct{}, workers+queueSize), workers: make(chan struct{}, workers),
 	}
 	if recovered, err := service.jobs.RecoverInterrupted(); err != nil {
 		cancel()
@@ -130,7 +155,18 @@ func (s *JobService) Shutdown(ctx context.Context) error {
 	}
 }
 
-func (s *JobService) Submit(targetID, actorID uint, request SubmitJobRequest, idempotencyKey string) (*model.ScrapeJob, error) {
+type JobRuntimeStats struct {
+	Queued   int `json:"queued"`
+	Running  int `json:"running"`
+	Capacity int `json:"capacity"`
+}
+
+func (s *JobService) Metrics() JobRuntimeStats {
+	running := len(s.workers)
+	return JobRuntimeStats{Queued: max(0, len(s.slots)-running), Running: running, Capacity: cap(s.slots)}
+}
+
+func (s *JobService) Submit(targetID, actorID uint, request SubmitJobCommand, idempotencyKey string) (*model.ScrapeJob, error) {
 	key := strings.TrimSpace(idempotencyKey)
 	if len(key) > 100 {
 		return nil, BadRequest("job.invalid_idempotency_key", "Idempotency-Key is too long")
@@ -183,6 +219,16 @@ func (s *JobService) Submit(targetID, actorID uint, request SubmitJobRequest, id
 		if !openlist.IsWithinPath(target.RootPath, operation.TargetPath) {
 			return nil, Forbidden("job.path_outside_root", "A target operation is outside the scrape target root")
 		}
+		if sourceType(target) == "local" {
+			if operation.SourcePath != "" {
+				if _, normalizeErr := s.local.Normalize(operation.SourcePath); normalizeErr != nil {
+					return nil, normalizeErr
+				}
+			}
+			if _, normalizeErr := s.local.Normalize(operation.TargetPath); normalizeErr != nil {
+				return nil, normalizeErr
+			}
+		}
 	}
 	active, err := s.jobs.ActiveCount(targetID, preview.CandidateID)
 	if err != nil {
@@ -196,8 +242,13 @@ func (s *JobService) Submit(targetID, actorID uint, request SubmitJobRequest, id
 	default:
 		return nil, TooManyRequests("job.queue_full", "The scrape job queue is full")
 	}
+	connectionID := uint(0)
+	if target.ConnectionID != nil {
+		connectionID = *target.ConnectionID
+	}
 	job := &model.ScrapeJob{
-		TargetID: targetID, PreviewID: preview.ID, CandidateID: preview.CandidateID, ConnectionID: target.ConnectionID,
+		TargetID: targetID, PreviewID: preview.ID, CandidateID: preview.CandidateID,
+		SourceType: sourceType(target), SourceRoot: target.RootPath, ConnectionID: connectionID,
 		ActorID: actorID, IdempotencyKey: key, Status: "pending", Stage: "preparing", Message: "Queued", Attempts: 1,
 	}
 	if err := s.jobs.Create(job, operations); err != nil {
@@ -306,11 +357,11 @@ func (s *JobService) dispatch(jobID uint) {
 		if err != nil || !claimed {
 			return
 		}
-		s.run(s.rootCtx, jobID)
+		s.executor.Execute(s.rootCtx, jobID)
 	}()
 }
 
-func (s *JobService) run(ctx context.Context, jobID uint) {
+func (s *JobExecutor) Execute(ctx context.Context, jobID uint) {
 	job, err := s.jobs.Find(jobID)
 	if err != nil {
 		return
@@ -325,19 +376,22 @@ func (s *JobService) run(ctx context.Context, jobID uint) {
 		s.fail(job, "preview.invalid_snapshot", "Stored scrape plan is invalid", err)
 		return
 	}
-	_, err = s.targets.Find(job.TargetID)
+	target, err := s.targets.Find(job.TargetID)
 	if err != nil {
 		s.fail(job, "target.not_found", "Scrape target no longer exists", err)
 		return
 	}
-	connection, err := s.connections.Find(job.ConnectionID)
-	if err != nil || !connection.Enabled {
-		s.fail(job, "target.connection_disabled", "OpenList connection is unavailable", err)
+	if jobSourceType(job) == "openlist" && (job.SourceRoot == "" || job.SourceRoot == "/") {
+		job.SourceRoot = target.RootPath
+		_ = s.jobs.Save(job)
+	}
+	if sourceType(target) != jobSourceType(job) || target.RootPath != job.SourceRoot {
+		s.fail(job, "job.source_changed", "Scrape target source changed after job submission", nil)
 		return
 	}
-	token, err := s.cipher.Decrypt(connection.EncryptedToken)
+	source, err := s.resolveJobSource(job)
 	if err != nil {
-		s.fail(job, "connection.decryption_failed", "Stored OpenList token cannot be decrypted", err)
+		s.failFromError(job, err)
 		return
 	}
 	operations, err := s.jobs.Operations(job.ID)
@@ -357,7 +411,7 @@ func (s *JobService) run(ctx context.Context, jobID uint) {
 			return
 		}
 	}
-	lock := s.connectionLock(connection.ID)
+	lock := s.storageLock(job)
 	lock.Lock()
 	defer lock.Unlock()
 
@@ -366,7 +420,7 @@ func (s *JobService) run(ctx context.Context, jobID uint) {
 		if operations[index].Type == "upload" || operations[index].Status == "succeeded" || operations[index].Status == "skipped" {
 			continue
 		}
-		if err := s.executeMutation(ctx, connection, token, &operations[index]); err != nil {
+		if err := s.executeMutation(ctx, source, &operations[index]); err != nil {
 			s.failOperation(job, &operations[index], err)
 			return
 		}
@@ -384,15 +438,15 @@ func (s *JobService) run(ctx context.Context, jobID uint) {
 		if operations[index].Type != "upload" || operations[index].Status == "succeeded" || operations[index].Status == "skipped" {
 			continue
 		}
-		if err := s.executeUpload(ctx, connection, token, &operations[index]); err != nil {
+		if err := s.executeUpload(ctx, source, &operations[index]); err != nil {
 			s.failOperation(job, &operations[index], err)
 			return
 		}
 		s.checkpoint(job, &operations[index], 70, 90, len(operations))
 	}
 
-	s.updateStage(job, "verifying", 95, "Verifying final OpenList paths")
-	if err := s.verify(ctx, connection, token, plan); err != nil {
+	s.updateStage(job, "verifying", 95, "Verifying final storage paths")
+	if err := s.verify(ctx, source, plan); err != nil {
 		s.failFromError(job, err)
 		return
 	}
@@ -404,7 +458,7 @@ func (s *JobService) run(ctx context.Context, jobID uint) {
 	logging.Info("job", "scrape job completed", logging.Fields{"job_id": job.ID, "target_id": job.TargetID})
 }
 
-func (s *JobService) executeMutation(ctx context.Context, connection *model.OpenListConnection, token string, operation *model.ScrapeJobOperation) error {
+func (s *JobExecutor) executeMutation(ctx context.Context, source *jobSource, operation *model.ScrapeJobOperation) error {
 	now := time.Now().UTC()
 	operation.Status, operation.Attempts, operation.StartedAt = "running", operation.Attempts+1, &now
 	if err := s.jobs.SaveOperation(operation); err != nil {
@@ -413,31 +467,39 @@ func (s *JobService) executeMutation(ctx context.Context, connection *model.Open
 	var err error
 	switch operation.Type {
 	case "mkdir":
-		exists, isDir, checkErr := s.entryState(ctx, connection, token, operation.TargetPath)
+		exists, isDir, checkErr := s.entryState(ctx, source, operation.TargetPath)
 		if checkErr != nil {
 			err = checkErr
 		} else if exists && isDir {
 			return s.completeOperation(operation, "skipped")
 		} else if exists {
 			err = Conflict("job.target_exists", "A file occupies the planned directory path")
-		} else if waitErr := s.quota.Wait(ctx, connection); waitErr != nil {
+		} else if source.local != nil {
+			err = source.local.CreateDirectory(operation.TargetPath)
+		} else if waitErr := s.quota.Wait(ctx, source.connection); waitErr != nil {
 			err = waitErr
 		} else {
-			err = s.client.CreateDirectory(ctx, connection.BaseURL, token, operation.TargetPath)
+			err = s.client.CreateDirectory(ctx, source.connection.BaseURL, source.token, operation.TargetPath)
 		}
 	case "rename":
-		err = s.ensureMutationState(ctx, connection, token, operation, func() error {
-			if waitErr := s.quota.Wait(ctx, connection); waitErr != nil {
+		err = s.ensureMutationState(ctx, source, operation, func() error {
+			if source.local != nil {
+				return source.local.MoveNoReplace(operation.SourcePath, operation.TargetPath)
+			}
+			if waitErr := s.quota.Wait(ctx, source.connection); waitErr != nil {
 				return waitErr
 			}
-			return s.client.RenameEntry(ctx, connection.BaseURL, token, operation.SourcePath, path.Base(operation.TargetPath))
+			return s.client.RenameEntry(ctx, source.connection.BaseURL, source.token, operation.SourcePath, path.Base(operation.TargetPath))
 		})
 	case "move":
-		err = s.ensureMutationState(ctx, connection, token, operation, func() error {
-			if waitErr := s.quota.Wait(ctx, connection); waitErr != nil {
+		err = s.ensureMutationState(ctx, source, operation, func() error {
+			if source.local != nil {
+				return source.local.MoveNoReplace(operation.SourcePath, operation.TargetPath)
+			}
+			if waitErr := s.quota.Wait(ctx, source.connection); waitErr != nil {
 				return waitErr
 			}
-			return s.client.MoveEntries(ctx, connection.BaseURL, token, path.Dir(operation.SourcePath), path.Dir(operation.TargetPath), []string{path.Base(operation.SourcePath)})
+			return s.client.MoveEntries(ctx, source.connection.BaseURL, source.token, path.Dir(operation.SourcePath), path.Dir(operation.TargetPath), []string{path.Base(operation.SourcePath)})
 		})
 	default:
 		err = BadRequest("job.invalid_operation", "Scrape operation type is invalid")
@@ -451,12 +513,12 @@ func (s *JobService) executeMutation(ctx context.Context, connection *model.Open
 	return s.completeOperation(operation, "succeeded")
 }
 
-func (s *JobService) ensureMutationState(ctx context.Context, connection *model.OpenListConnection, token string, operation *model.ScrapeJobOperation, mutate func() error) error {
-	sourceExists, _, err := s.entryState(ctx, connection, token, operation.SourcePath)
+func (s *JobExecutor) ensureMutationState(ctx context.Context, source *jobSource, operation *model.ScrapeJobOperation, mutate func() error) error {
+	sourceExists, _, err := s.entryState(ctx, source, operation.SourcePath)
 	if err != nil {
 		return err
 	}
-	targetExists, _, err := s.entryState(ctx, connection, token, operation.TargetPath)
+	targetExists, _, err := s.entryState(ctx, source, operation.TargetPath)
 	if err != nil {
 		return err
 	}
@@ -466,26 +528,29 @@ func (s *JobService) ensureMutationState(ctx context.Context, connection *model.
 		}
 		return errOperationSkipped
 	}
-	if targetExists {
-		return Conflict("job.target_exists", "OpenList destination appeared after preview")
+	if targetExists && !(source.local != nil && sourceExists && strings.EqualFold(operation.SourcePath, operation.TargetPath)) {
+		return Conflict("job.target_exists", "Storage destination appeared after preview")
 	}
 	if !sourceExists {
-		return Conflict("job.source_missing", "OpenList source is missing")
+		return Conflict("job.source_missing", "Storage source is missing")
 	}
 	return mutate()
 }
 
-func (s *JobService) completeOperation(operation *model.ScrapeJobOperation, status string) error {
+func (s *JobExecutor) completeOperation(operation *model.ScrapeJobOperation, status string) error {
 	now := time.Now().UTC()
 	operation.Status, operation.CompletedAt, operation.LastError = status, &now, ""
 	return s.jobs.SaveOperation(operation)
 }
 
-func (s *JobService) entryState(ctx context.Context, connection *model.OpenListConnection, token, remotePath string) (bool, bool, error) {
-	if err := s.quota.Wait(ctx, connection); err != nil {
+func (s *JobExecutor) entryState(ctx context.Context, source *jobSource, remotePath string) (bool, bool, error) {
+	if source.local != nil {
+		return source.local.EntryState(remotePath)
+	}
+	if err := s.quota.Wait(ctx, source.connection); err != nil {
 		return false, false, err
 	}
-	entries, err := s.client.ListDirectory(ctx, connection.BaseURL, token, path.Dir(remotePath), true)
+	entries, err := s.client.ListDirectory(ctx, source.connection.BaseURL, source.token, path.Dir(remotePath), true)
 	if err != nil {
 		return false, false, mapOpenListError(err)
 	}
@@ -497,7 +562,7 @@ func (s *JobService) entryState(ctx context.Context, connection *model.OpenListC
 	return false, false, nil
 }
 
-func (s *JobService) prepareArtifacts(ctx context.Context, job *model.ScrapeJob, plan PreviewPlan, operations []model.ScrapeJobOperation) error {
+func (s *JobExecutor) prepareArtifacts(ctx context.Context, job *model.ScrapeJob, plan PreviewPlan, operations []model.ScrapeJobOperation) error {
 	workspace := s.jobWorkspace(job.ID)
 	if err := os.MkdirAll(workspace, 0o750); err != nil {
 		return Internal("job.workspace_failed", "Failed to prepare job workspace", err)
@@ -533,7 +598,7 @@ func (s *JobService) prepareArtifacts(ctx context.Context, job *model.ScrapeJob,
 	return nil
 }
 
-func (s *JobService) downloadImage(ctx context.Context, rawURL, destination string) (string, error) {
+func (s *JobExecutor) downloadImage(ctx context.Context, rawURL, destination string) (string, error) {
 	parsed, err := url.Parse(rawURL)
 	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
 		return "", BadRequest("job.invalid_image_url", "TMDB image URL is invalid")
@@ -582,7 +647,7 @@ func (s *JobService) downloadImage(ctx context.Context, rawURL, destination stri
 	return contentType, nil
 }
 
-func (s *JobService) executeUpload(ctx context.Context, connection *model.OpenListConnection, token string, operation *model.ScrapeJobOperation) error {
+func (s *JobExecutor) executeUpload(ctx context.Context, source *jobSource, operation *model.ScrapeJobOperation) error {
 	now := time.Now().UTC()
 	operation.Status, operation.Attempts, operation.StartedAt = "running", operation.Attempts+1, &now
 	if err := s.jobs.SaveOperation(operation); err != nil {
@@ -597,16 +662,22 @@ func (s *JobService) executeUpload(ctx context.Context, connection *model.OpenLi
 	if err != nil {
 		return Internal("job.artifact_missing", "Prepared metadata artifact cannot be read", err)
 	}
-	if err := s.quota.Wait(ctx, connection); err != nil {
-		return err
-	}
-	if err := s.client.Upload(ctx, connection.BaseURL, token, operation.TargetPath, operation.ContentType, info.Size(), file); err != nil {
-		return mapOpenListError(err)
+	if source.local != nil {
+		if err := source.local.PutMetadata(operation.TargetPath, info.Size(), file); err != nil {
+			return err
+		}
+	} else {
+		if err := s.quota.Wait(ctx, source.connection); err != nil {
+			return err
+		}
+		if err := s.client.Upload(ctx, source.connection.BaseURL, source.token, operation.TargetPath, operation.ContentType, info.Size(), file); err != nil {
+			return mapOpenListError(err)
+		}
 	}
 	return s.completeOperation(operation, "succeeded")
 }
 
-func (s *JobService) verify(ctx context.Context, connection *model.OpenListConnection, token string, plan PreviewPlan) error {
+func (s *JobExecutor) verify(ctx context.Context, source *jobSource, plan PreviewPlan) error {
 	expected := make([]string, 0, len(plan.ProposedFileRenames)+len(plan.Artifacts)+1)
 	if plan.ProposedDirectoryPath != "" && plan.ProposedDirectoryPath != path.Dir(plan.SourcePath) {
 		expected = append(expected, plan.ProposedDirectoryPath)
@@ -618,24 +689,24 @@ func (s *JobService) verify(ctx context.Context, connection *model.OpenListConne
 		expected = append(expected, artifact.Path)
 	}
 	for _, remotePath := range expected {
-		exists, _, err := s.entryState(ctx, connection, token, remotePath)
+		exists, _, err := s.entryState(ctx, source, remotePath)
 		if err != nil {
 			return err
 		}
 		if !exists {
-			return Conflict("job.verification_failed", "An expected OpenList path is missing after execution")
+			return Conflict("job.verification_failed", "An expected storage path is missing after execution")
 		}
 	}
 	return nil
 }
 
-func (s *JobService) updateStage(job *model.ScrapeJob, stage string, progress int, message string) {
+func (s *JobExecutor) updateStage(job *model.ScrapeJob, stage string, progress int, message string) {
 	job.Stage, job.Progress, job.Message = stage, progress, message
 	_ = s.jobs.Save(job)
 	logging.Info("job", "scrape job stage", logging.Fields{"job_id": job.ID, "target_id": job.TargetID, "stage": stage, "progress": progress})
 }
 
-func (s *JobService) checkpoint(job *model.ScrapeJob, operation *model.ScrapeJobOperation, start, end, total int) {
+func (s *JobExecutor) checkpoint(job *model.ScrapeJob, operation *model.ScrapeJobOperation, start, end, total int) {
 	job.Checkpoint = operation.Sequence
 	if total > 0 {
 		job.Progress = start + (end-start)*operation.Sequence/total
@@ -644,7 +715,7 @@ func (s *JobService) checkpoint(job *model.ScrapeJob, operation *model.ScrapeJob
 	_ = s.jobs.Save(job)
 }
 
-func (s *JobService) failOperation(job *model.ScrapeJob, operation *model.ScrapeJobOperation, err error) {
+func (s *JobExecutor) failOperation(job *model.ScrapeJob, operation *model.ScrapeJobOperation, err error) {
 	operation.Status, operation.LastError = "failed", safeErrorMessage(err)
 	now := time.Now().UTC()
 	operation.CompletedAt = &now
@@ -652,7 +723,7 @@ func (s *JobService) failOperation(job *model.ScrapeJob, operation *model.Scrape
 	s.failFromError(job, err)
 }
 
-func (s *JobService) failFromError(job *model.ScrapeJob, err error) {
+func (s *JobExecutor) failFromError(job *model.ScrapeJob, err error) {
 	var serviceError *Error
 	if errors.As(err, &serviceError) {
 		s.fail(job, serviceError.Code, serviceError.Message, serviceError.Cause)
@@ -670,7 +741,7 @@ func (s *JobService) failFromError(job *model.ScrapeJob, err error) {
 	s.fail(job, "job.execution_failed", "Scrape job execution failed", err)
 }
 
-func (s *JobService) fail(job *model.ScrapeJob, code, message string, cause error) {
+func (s *JobExecutor) fail(job *model.ScrapeJob, code, message string, cause error) {
 	now := time.Now().UTC()
 	job.Status, job.ErrorCode, job.ErrorMessage, job.Message, job.CompletedAt = "failed", code, message, message, &now
 	_ = s.jobs.Save(job)
@@ -686,12 +757,41 @@ func (s *JobService) recordAudit(actorID uint, action string, job *model.ScrapeJ
 	_ = s.audit.Record(actorID, action, "scrape_job:"+strconv.Itoa(int(job.ID)), string(detail))
 }
 
-func (s *JobService) connectionLock(connectionID uint) *sync.Mutex {
-	value, _ := s.locks.LoadOrStore(connectionID, &sync.Mutex{})
+func (s *JobExecutor) storageLock(job *model.ScrapeJob) *sync.Mutex {
+	key := "local:" + s.local.root
+	if jobSourceType(job) == "openlist" {
+		key = "openlist:" + strconv.FormatUint(uint64(job.ConnectionID), 10)
+	}
+	value, _ := s.locks.LoadOrStore(key, &sync.Mutex{})
 	return value.(*sync.Mutex)
 }
 
-func (s *JobService) jobWorkspace(jobID uint) string {
+func jobSourceType(job *model.ScrapeJob) string {
+	if strings.ToLower(strings.TrimSpace(job.SourceType)) == "local" {
+		return "local"
+	}
+	return "openlist"
+}
+
+func (s *JobExecutor) resolveJobSource(job *model.ScrapeJob) (*jobSource, error) {
+	if jobSourceType(job) == "local" {
+		if _, err := s.local.Normalize(job.SourceRoot); err != nil {
+			return nil, err
+		}
+		return &jobSource{local: s.local}, nil
+	}
+	connection, err := s.connections.Find(job.ConnectionID)
+	if err != nil || !connection.Enabled {
+		return nil, Conflict("target.connection_disabled", "OpenList connection is unavailable")
+	}
+	token, err := s.cipher.Decrypt(connection.EncryptedToken)
+	if err != nil {
+		return nil, Internal("connection.decryption_failed", "Stored OpenList token cannot be decrypted", err)
+	}
+	return &jobSource{connection: connection, token: token}, nil
+}
+
+func (s *JobExecutor) jobWorkspace(jobID uint) string {
 	return filepath.Join(s.workDir, strconv.FormatUint(uint64(jobID), 10))
 }
 

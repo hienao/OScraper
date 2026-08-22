@@ -23,11 +23,11 @@ func (h *SettingHandler) GetScraping(c *gin.Context) {
 }
 
 func (h *SettingHandler) SaveScraping(c *gin.Context) {
-	var request service.ScrapingSettingsRequest
+	var request scrapingSettingsRequest
 	if !bindJSON(c, &request) {
 		return
 	}
-	settings, err := h.service.SaveScraping(currentUserID(c), request)
+	settings, err := h.service.SaveScraping(currentUserID(c), request.command())
 	if err != nil {
 		respondError(c, err)
 		return

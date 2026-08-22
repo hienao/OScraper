@@ -39,11 +39,11 @@ func (h *ConnectionHandler) Get(c *gin.Context) {
 }
 
 func (h *ConnectionHandler) Test(c *gin.Context) {
-	var request service.TestConnectionRequest
+	var request testConnectionRequest
 	if !bindJSON(c, &request) {
 		return
 	}
-	result, err := h.service.Test(c.Request.Context(), request)
+	result, err := h.service.Test(c.Request.Context(), request.command())
 	if err != nil {
 		respondError(c, err)
 		return
@@ -52,11 +52,11 @@ func (h *ConnectionHandler) Test(c *gin.Context) {
 }
 
 func (h *ConnectionHandler) Create(c *gin.Context) {
-	var request service.ConnectionRequest
+	var request createConnectionRequest
 	if !bindJSON(c, &request) {
 		return
 	}
-	connection, err := h.service.Create(c.Request.Context(), currentUserID(c), request)
+	connection, err := h.service.Create(c.Request.Context(), currentUserID(c), request.command())
 	if err != nil {
 		respondError(c, err)
 		return
@@ -71,11 +71,11 @@ func (h *ConnectionHandler) Update(c *gin.Context) {
 	if !ok {
 		return
 	}
-	var request service.ConnectionUpdateRequest
+	var request updateConnectionRequest
 	if !bindJSON(c, &request) {
 		return
 	}
-	connection, err := h.service.Update(id, currentUserID(c), request)
+	connection, err := h.service.Update(id, currentUserID(c), request.command())
 	if err != nil {
 		respondError(c, err)
 		return
@@ -101,11 +101,11 @@ func (h *ConnectionHandler) RotateToken(c *gin.Context) {
 	if !ok {
 		return
 	}
-	var request service.TokenRequest
+	var request rotateTokenRequest
 	if !bindJSON(c, &request) {
 		return
 	}
-	connection, err := h.service.RotateToken(c.Request.Context(), id, currentUserID(c), request)
+	connection, err := h.service.RotateToken(c.Request.Context(), id, currentUserID(c), request.command())
 	if err != nil {
 		respondError(c, err)
 		return

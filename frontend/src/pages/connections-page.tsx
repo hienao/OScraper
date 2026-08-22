@@ -1,4 +1,4 @@
-import { Check, Plus, Refresh, Settings, Trash, X } from '@appica/icons-react'
+import { Check, Plus, Refresh, Settings, Trash } from '@appica/icons-react'
 import { Badge } from '@appica/ui-react/badge'
 import { Button } from '@appica/ui-react/button'
 import { Input } from '@appica/ui-react/input'
@@ -7,6 +7,8 @@ import { useState, type FormEvent } from 'react'
 import { useTranslation } from 'react-i18next'
 import { connectionApi } from '@/api/services'
 import type { CreateConnectionInput, OpenListConnection, UpdateConnectionInput } from '@/api/types'
+import { AppDialog } from '@/components/common/app-dialog'
+import { CheckboxField } from '@/components/common/checkbox-field'
 import { FormField } from '@/components/common/form-field'
 import { Message } from '@/components/common/message'
 import { Panel } from '@/components/common/panel'
@@ -104,24 +106,13 @@ export function ConnectionsPage() {
         )}
       </Panel>
 
-      {formOpen && (
-        <div className="fixed inset-0 z-50 grid place-items-center overflow-y-auto bg-neutral-950/50 p-4 backdrop-blur-sm" role="dialog" aria-modal="true" aria-labelledby="connection-form-title">
-          <form className="app-panel my-8 w-full max-w-xl p-6" onSubmit={(event) => void submit(event)}>
-            <div className="flex items-start justify-between gap-4"><div><h2 id="connection-form-title" className="text-xl font-bold">{t(editing ? 'connections.editTitle' : 'connections.createTitle')}</h2><p className="mt-1 text-sm text-neutral-500">{t(editing ? 'connections.editDescription' : 'connections.createDescription')}</p></div><Button type="button" variant="ghost" size="icon-md" aria-label={t('common.close')} onClick={() => setFormOpen(false)}><X size={20} /></Button></div>
-            <div className="mt-6 space-y-4">
-              <FormField label={t('connections.name')}><Input value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} placeholder={t('connections.placeholderName')} required maxLength={100} /></FormField>
-              <FormField label={t('connections.baseUrl')}><Input type="url" value={form.base_url} onChange={(event) => setForm({ ...form, base_url: event.target.value })} placeholder={t('connections.placeholderUrl')} required /></FormField>
-              <FormField label={t(editing ? 'connections.tokenOptional' : 'connections.token')}><Input type="password" value={form.token} onChange={(event) => setForm({ ...form, token: event.target.value })} required={!editing} autoComplete="new-password" /></FormField>
-              <div className="grid gap-4 sm:grid-cols-2">
-                <FormField label={t('connections.qps')}><Input type="number" min={0} max={1000} value={form.qps_limit} onChange={(event) => setForm({ ...form, qps_limit: Number(event.target.value) })} required /></FormField>
-                <FormField label={t('connections.qpm')}><Input type="number" min={0} max={60000} value={form.qpm_limit} onChange={(event) => setForm({ ...form, qpm_limit: Number(event.target.value) })} required /></FormField>
-              </div>
-              {editing && <label className="flex items-center gap-3 rounded-xl border border-neutral-200 p-3 text-sm dark:border-neutral-800"><input type="checkbox" checked={form.enabled} onChange={(event) => setForm({ ...form, enabled: event.target.checked })} /><span>{t(form.enabled ? 'common.enabled' : 'common.disabled')}</span></label>}
-            </div>
-            <div className="mt-6 flex justify-end gap-2"><Button type="button" variant="ghost" onClick={() => setFormOpen(false)}>{t('common.cancel')}</Button><Button type="submit" className="gap-2" disabled={saving}>{saving ? t('connections.saving') : <><Check size={16} />{t('common.save')}</>}</Button></div>
-          </form>
-        </div>
-      )}
+      <AppDialog open={formOpen} onOpenChange={setFormOpen} width="sm" closeLabel={t('common.close')} title={t(editing ? 'connections.editTitle' : 'connections.createTitle')} description={t(editing ? 'connections.editDescription' : 'connections.createDescription')} onSubmit={(event) => void submit(event)} bodyClassName="space-y-4" footer={<><Button type="button" variant="ghost" onClick={() => setFormOpen(false)}>{t('common.cancel')}</Button><Button type="submit" className="gap-2" disabled={saving}>{saving ? t('connections.saving') : <><Check size={16} />{t('common.save')}</>}</Button></>}>
+        <FormField label={t('connections.name')}><Input value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} placeholder={t('connections.placeholderName')} required maxLength={100} /></FormField>
+        <FormField label={t('connections.baseUrl')}><Input type="url" value={form.base_url} onChange={(event) => setForm({ ...form, base_url: event.target.value })} placeholder={t('connections.placeholderUrl')} required /></FormField>
+        <FormField label={t(editing ? 'connections.tokenOptional' : 'connections.token')}><Input type="password" value={form.token} onChange={(event) => setForm({ ...form, token: event.target.value })} required={!editing} autoComplete="new-password" /></FormField>
+        <div className="grid gap-4 sm:grid-cols-2"><FormField label={t('connections.qps')}><Input type="number" min={0} max={1000} value={form.qps_limit} onChange={(event) => setForm({ ...form, qps_limit: Number(event.target.value) })} required /></FormField><FormField label={t('connections.qpm')}><Input type="number" min={0} max={60000} value={form.qpm_limit} onChange={(event) => setForm({ ...form, qpm_limit: Number(event.target.value) })} required /></FormField></div>
+        {editing && <CheckboxField checked={form.enabled} onCheckedChange={(enabled) => setForm({ ...form, enabled })} label={t(form.enabled ? 'common.enabled' : 'common.disabled')} />}
+      </AppDialog>
     </div>
   )
 }
