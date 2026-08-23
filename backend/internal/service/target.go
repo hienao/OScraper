@@ -26,20 +26,23 @@ type TargetService struct {
 	jobs        *repository.JobRepository
 	cipher      *cryptoutil.Cipher
 	client      DirectoryBrowser
+	local       *localStorage
 }
 
-type TargetRequest struct {
-	ConnectionID  uint   `json:"connection_id" binding:"required"`
-	Name          string `json:"name" binding:"required,min=1,max=100"`
-	RootPath      string `json:"root_path" binding:"required,max=1000"`
-	LibraryType   string `json:"library_type" binding:"required,oneof=movie tv anime"`
-	RenameEnabled bool   `json:"rename_enabled"`
-	Enabled       bool   `json:"enabled"`
+type SaveTargetCommand struct {
+	SourceType    string
+	ConnectionID  uint
+	Name          string
+	RootPath      string
+	LibraryType   string
+	RenameEnabled bool
+	Enabled       bool
 }
 
 type TargetResponse struct {
 	ID             uint      `json:"id"`
-	ConnectionID   uint      `json:"connection_id"`
+	SourceType     string    `json:"source_type"`
+	ConnectionID   *uint     `json:"connection_id,omitempty"`
 	ConnectionName string    `json:"connection_name"`
 	Name           string    `json:"name"`
 	RootPath       string    `json:"root_path"`
@@ -65,10 +68,15 @@ type DirectoryLevel struct {
 	Entries  []DirectoryNode `json:"entries"`
 }
 
-func NewTargetService(db *gorm.DB, cipher *cryptoutil.Cipher, client DirectoryBrowser) *TargetService {
+func NewTargetService(db *gorm.DB, cipher *cryptoutil.Cipher, client DirectoryBrowser, localRoots ...string) *TargetService {
+	localRoot := defaultLocalMediaRoot
+	if len(localRoots) > 0 {
+		localRoot = localRoots[0]
+	}
 	return &TargetService{
 		targets: repository.NewTargetRepository(db), connections: repository.NewConnectionRepository(db),
 		audit: repository.NewAuditRepository(db), jobs: repository.NewJobRepository(db), cipher: cipher, client: client,
+		local: newLocalStorage(localRoot),
 	}
 }
 
@@ -77,11 +85,15 @@ func (s *TargetService) Get(id uint) (*TargetResponse, error) {
 	if err != nil {
 		return nil, err
 	}
-	connection, err := s.connections.Find(target.ConnectionID)
-	if err != nil {
-		return nil, Internal("target.connection_failed", "Failed to load target connection", err)
+	connectionName := "Local media"
+	if sourceType(target) == "openlist" {
+		connection, connectionErr := s.requireTargetConnection(target)
+		if connectionErr != nil {
+			return nil, connectionErr
+		}
+		connectionName = connection.Name
 	}
-	response := targetResponse(target, connection.Name)
+	response := targetResponse(target, connectionName)
 	return &response, nil
 }
 
@@ -92,33 +104,37 @@ func (s *TargetService) List() ([]TargetResponse, error) {
 	}
 	responses := make([]TargetResponse, 0, len(targets))
 	for index := range targets {
-		connection, connectionErr := s.connections.Find(targets[index].ConnectionID)
-		if connectionErr != nil {
-			return nil, Internal("target.connection_failed", "Failed to load target connection", connectionErr)
+		connectionName := "Local media"
+		if sourceType(&targets[index]) == "openlist" {
+			connection, connectionErr := s.requireTargetConnection(&targets[index])
+			if connectionErr != nil {
+				return nil, connectionErr
+			}
+			connectionName = connection.Name
 		}
-		responses = append(responses, targetResponse(&targets[index], connection.Name))
+		responses = append(responses, targetResponse(&targets[index], connectionName))
 	}
 	return responses, nil
 }
 
-func (s *TargetService) Create(ctx context.Context, actorID uint, request TargetRequest) (*TargetResponse, error) {
-	connection, rootPath, err := s.validate(ctx, request)
+func (s *TargetService) Create(ctx context.Context, actorID uint, request SaveTargetCommand) (*TargetResponse, error) {
+	source, connectionID, connectionName, rootPath, err := s.validate(ctx, request, 0)
 	if err != nil {
 		return nil, err
 	}
 	target := &model.ScrapeTarget{
-		ConnectionID: request.ConnectionID, Name: strings.TrimSpace(request.Name), RootPath: rootPath,
+		SourceType: source, ConnectionID: connectionID, Name: strings.TrimSpace(request.Name), RootPath: rootPath,
 		LibraryType: strings.ToLower(request.LibraryType), RenameEnabled: request.RenameEnabled, Enabled: request.Enabled,
 	}
 	if err := s.targets.Create(target); err != nil {
 		return nil, Internal("target.create_failed", "Failed to create scrape target", err)
 	}
 	s.recordAudit(actorID, "target.create", target)
-	response := targetResponse(target, connection.Name)
+	response := targetResponse(target, connectionName)
 	return &response, nil
 }
 
-func (s *TargetService) Update(ctx context.Context, id, actorID uint, request TargetRequest) (*TargetResponse, error) {
+func (s *TargetService) Update(ctx context.Context, id, actorID uint, request SaveTargetCommand) (*TargetResponse, error) {
 	target, err := s.require(id)
 	if err != nil {
 		return nil, err
@@ -126,11 +142,12 @@ func (s *TargetService) Update(ctx context.Context, id, actorID uint, request Ta
 	if err := s.requireIdle(id); err != nil {
 		return nil, err
 	}
-	connection, rootPath, err := s.validate(ctx, request)
+	source, connectionID, connectionName, rootPath, err := s.validate(ctx, request, id)
 	if err != nil {
 		return nil, err
 	}
-	target.ConnectionID = request.ConnectionID
+	target.SourceType = source
+	target.ConnectionID = connectionID
 	target.Name = strings.TrimSpace(request.Name)
 	target.RootPath = rootPath
 	target.LibraryType = strings.ToLower(request.LibraryType)
@@ -140,7 +157,7 @@ func (s *TargetService) Update(ctx context.Context, id, actorID uint, request Ta
 		return nil, Internal("target.update_failed", "Failed to update scrape target", err)
 	}
 	s.recordAudit(actorID, "target.update", target)
-	response := targetResponse(target, connection.Name)
+	response := targetResponse(target, connectionName)
 	return &response, nil
 }
 
@@ -175,25 +192,17 @@ func (s *TargetService) Browse(ctx context.Context, id uint, requestedPath strin
 	if err != nil {
 		return nil, err
 	}
-	connection, err := s.connections.Find(target.ConnectionID)
-	if err != nil {
-		return nil, Internal("target.connection_failed", "Failed to load target connection", err)
-	}
 	path := strings.TrimSpace(requestedPath)
 	if path == "" {
 		path = target.RootPath
 	}
-	normalized, normalizeErr := openlist.NormalizeRemotePath(path)
+	normalized, normalizeErr := s.normalizeTargetPath(target, path)
 	if normalizeErr != nil || !openlist.IsWithinPath(target.RootPath, normalized) {
 		return nil, Forbidden("target.path_outside_root", "Requested path is outside the scrape target root")
 	}
-	token, err := s.cipher.Decrypt(connection.EncryptedToken)
+	entries, err := s.listTargetDirectory(ctx, target, normalized, refresh)
 	if err != nil {
-		return nil, Internal("connection.decryption_failed", "Stored OpenList token cannot be decrypted", err)
-	}
-	entries, err := s.client.ListDirectory(ctx, connection.BaseURL, token, normalized, refresh)
-	if err != nil {
-		return nil, mapOpenListError(err)
+		return nil, err
 	}
 	nodes := make([]DirectoryNode, 0, len(entries))
 	for _, entry := range entries {
@@ -202,36 +211,138 @@ func (s *TargetService) Browse(ctx context.Context, id uint, requestedPath strin
 	return &DirectoryLevel{TargetID: target.ID, RootPath: target.RootPath, Path: normalized, Entries: nodes}, nil
 }
 
-func (s *TargetService) validate(ctx context.Context, request TargetRequest) (*model.OpenListConnection, string, error) {
+func (s *TargetService) validate(ctx context.Context, request SaveTargetCommand, excludeID uint) (string, *uint, string, string, error) {
 	libraryType := strings.ToLower(strings.TrimSpace(request.LibraryType))
 	if libraryType != "movie" && libraryType != "tv" && libraryType != "anime" {
-		return nil, "", BadRequest("target.invalid_library_type", "Scrape target media type is invalid")
+		return "", nil, "", "", BadRequest("target.invalid_library_type", "Scrape target media type is invalid")
+	}
+	source := strings.ToLower(strings.TrimSpace(request.SourceType))
+	if source == "" {
+		source = "openlist"
+	}
+	if source == "local" {
+		rootPath, normalizeErr := s.local.Normalize(request.RootPath)
+		if normalizeErr != nil {
+			return "", nil, "", "", normalizeErr
+		}
+		if _, err := s.local.ListDirectory(ctx, rootPath, false); err != nil {
+			return "", nil, "", "", err
+		}
+		if request.Enabled {
+			targets, err := s.targets.List()
+			if err != nil {
+				return "", nil, "", "", Internal("target.list_failed", "Failed to validate local target overlap", err)
+			}
+			for index := range targets {
+				existing := &targets[index]
+				if existing.ID == excludeID || !existing.Enabled || sourceType(existing) != "local" {
+					continue
+				}
+				if openlist.IsWithinPath(existing.RootPath, rootPath) || openlist.IsWithinPath(rootPath, existing.RootPath) {
+					return "", nil, "", "", Conflict("target.local_root_overlap", "Local scrape target overlaps another enabled target")
+				}
+			}
+		}
+		return source, nil, "Local media", rootPath, nil
+	}
+	if source != "openlist" {
+		return "", nil, "", "", BadRequest("target.invalid_source_type", "Scrape target source type is invalid")
+	}
+	if request.ConnectionID == 0 {
+		return "", nil, "", "", BadRequest("target.connection_required", "OpenList connection is required")
 	}
 	connection, err := s.connections.Find(request.ConnectionID)
 	if errors.Is(err, gorm.ErrRecordNotFound) {
-		return nil, "", NotFound("connection.not_found", "OpenList connection not found")
+		return "", nil, "", "", NotFound("connection.not_found", "OpenList connection not found")
 	}
 	if err != nil {
-		return nil, "", Internal("target.connection_failed", "Failed to load target connection", err)
+		return "", nil, "", "", Internal("target.connection_failed", "Failed to load target connection", err)
 	}
 	if !connection.Enabled {
-		return nil, "", Conflict("target.connection_disabled", "OpenList connection is disabled")
+		return "", nil, "", "", Conflict("target.connection_disabled", "OpenList connection is disabled")
 	}
 	rootPath, normalizeErr := openlist.NormalizeRemotePath(request.RootPath)
 	if normalizeErr != nil {
-		return nil, "", BadRequest("target.invalid_path", "Scrape target path is invalid")
+		return "", nil, "", "", BadRequest("target.invalid_path", "Scrape target path is invalid")
 	}
 	if !openlist.IsWithinPath(connection.BasePath, rootPath) {
-		return nil, "", Forbidden("target.path_outside_account", "Scrape target path is outside the OpenList account root")
+		return "", nil, "", "", Forbidden("target.path_outside_account", "Scrape target path is outside the OpenList account root")
 	}
 	token, err := s.cipher.Decrypt(connection.EncryptedToken)
 	if err != nil {
-		return nil, "", Internal("connection.decryption_failed", "Stored OpenList token cannot be decrypted", err)
+		return "", nil, "", "", Internal("connection.decryption_failed", "Stored OpenList token cannot be decrypted", err)
 	}
 	if _, err := s.client.ListDirectory(ctx, connection.BaseURL, token, rootPath, false); err != nil {
-		return nil, "", mapOpenListError(err)
+		return "", nil, "", "", mapOpenListError(err)
 	}
-	return connection, rootPath, nil
+	connectionID := connection.ID
+	return source, &connectionID, connection.Name, rootPath, nil
+}
+
+func (s *TargetService) LocalStatus() LocalStorageStatus { return s.local.Status() }
+
+func (s *TargetService) BrowseLocal(ctx context.Context, requestedPath string) (*DirectoryLevel, error) {
+	path := strings.TrimSpace(requestedPath)
+	if path == "" {
+		path = s.local.root
+	}
+	normalized, err := s.local.Normalize(path)
+	if err != nil {
+		return nil, err
+	}
+	entries, err := s.local.ListDirectory(ctx, normalized, false)
+	if err != nil {
+		return nil, err
+	}
+	nodes := make([]DirectoryNode, 0, len(entries))
+	for _, entry := range entries {
+		nodes = append(nodes, DirectoryNode{Name: entry.Name, Path: entry.Path, IsDir: entry.IsDir, Size: entry.Size, Modified: entry.Modified})
+	}
+	return &DirectoryLevel{RootPath: s.local.root, Path: normalized, Entries: nodes}, nil
+}
+
+func (s *TargetService) normalizeTargetPath(target *model.ScrapeTarget, value string) (string, error) {
+	if sourceType(target) == "local" {
+		return s.local.Normalize(value)
+	}
+	return openlist.NormalizeRemotePath(value)
+}
+
+func (s *TargetService) listTargetDirectory(ctx context.Context, target *model.ScrapeTarget, path string, refresh bool) ([]openlist.DirectoryEntry, error) {
+	if sourceType(target) == "local" {
+		return s.local.ListDirectory(ctx, path, false)
+	}
+	connection, err := s.requireTargetConnection(target)
+	if err != nil {
+		return nil, err
+	}
+	token, err := s.cipher.Decrypt(connection.EncryptedToken)
+	if err != nil {
+		return nil, Internal("connection.decryption_failed", "Stored OpenList token cannot be decrypted", err)
+	}
+	entries, err := s.client.ListDirectory(ctx, connection.BaseURL, token, path, refresh)
+	if err != nil {
+		return nil, mapOpenListError(err)
+	}
+	return entries, nil
+}
+
+func (s *TargetService) requireTargetConnection(target *model.ScrapeTarget) (*model.OpenListConnection, error) {
+	if target.ConnectionID == nil || *target.ConnectionID == 0 {
+		return nil, Internal("target.connection_failed", "OpenList target has no connection", nil)
+	}
+	connection, err := s.connections.Find(*target.ConnectionID)
+	if err != nil {
+		return nil, Internal("target.connection_failed", "Failed to load target connection", err)
+	}
+	return connection, nil
+}
+
+func sourceType(target *model.ScrapeTarget) string {
+	if strings.ToLower(strings.TrimSpace(target.SourceType)) == "local" {
+		return "local"
+	}
+	return "openlist"
 }
 
 func (s *TargetService) require(id uint) (*model.ScrapeTarget, error) {
@@ -247,7 +358,7 @@ func (s *TargetService) require(id uint) (*model.ScrapeTarget, error) {
 
 func (s *TargetService) recordAudit(actorID uint, action string, target *model.ScrapeTarget) {
 	detail, _ := json.Marshal(map[string]interface{}{
-		"connection_id": target.ConnectionID, "root_path": target.RootPath,
+		"source_type": sourceType(target), "connection_id": target.ConnectionID, "root_path": target.RootPath,
 		"library_type": target.LibraryType, "rename_enabled": target.RenameEnabled,
 	})
 	_ = s.audit.Record(actorID, action, "scrape_target:"+target.Name, string(detail))
@@ -255,7 +366,7 @@ func (s *TargetService) recordAudit(actorID uint, action string, target *model.S
 
 func targetResponse(target *model.ScrapeTarget, connectionName string) TargetResponse {
 	return TargetResponse{
-		ID: target.ID, ConnectionID: target.ConnectionID, ConnectionName: connectionName,
+		ID: target.ID, SourceType: sourceType(target), ConnectionID: target.ConnectionID, ConnectionName: connectionName,
 		Name: target.Name, RootPath: target.RootPath, LibraryType: target.LibraryType,
 		RenameEnabled: target.RenameEnabled, Enabled: target.Enabled, CreatedAt: target.CreatedAt, UpdatedAt: target.UpdatedAt,
 	}

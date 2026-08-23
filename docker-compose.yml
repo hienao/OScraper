@@ -7,8 +7,6 @@ services:
       - "3113:3113"
     environment:
       APP_ENV: ${APP_ENV:-production}
-      DB_DRIVER: ${DB_DRIVER:-sqlite}
-      DATABASE_URL: ${DATABASE_URL:-}
       JWT_SECRET: ${JWT_SECRET:?JWT_SECRET is required}
       CREDENTIAL_ENCRYPTION_KEY: ${CREDENTIAL_ENCRYPTION_KEY:?CREDENTIAL_ENCRYPTION_KEY is required}
       TZ: ${TZ:-UTC}
@@ -16,28 +14,14 @@ services:
       API_LOG_BATCH_SIZE: ${API_LOG_BATCH_SIZE:-100}
       SCRAPE_WORKERS: ${SCRAPE_WORKERS:-2}
       SCRAPE_QUEUE_SIZE: ${SCRAPE_QUEUE_SIZE:-100}
+      SCAN_WORKERS: ${SCAN_WORKERS:-1}
+      SCAN_QUEUE_SIZE: ${SCAN_QUEUE_SIZE:-20}
       MAX_IMAGE_BYTES: ${MAX_IMAGE_BYTES:-20971520}
       JOB_RETENTION_DAYS: ${JOB_RETENTION_DAYS:-7}
       LOG_RETENTION_DAYS: ${LOG_RETENTION_DAYS:-7}
+      DATA_RETENTION_DAYS: ${DATA_RETENTION_DAYS:-30}
     volumes:
       - ${HOST_DATA_DIR:-./runtime/data}:/data
       - ${HOST_CACHE_DIR:-./runtime/cache}:/cache
+      - ${HOST_MEDIA_DIR:-./runtime/media}:/media
     restart: unless-stopped
-
-  db:
-    profiles: ["postgres"]
-    image: postgres:17-alpine
-    environment:
-      POSTGRES_USER: ${POSTGRES_USER:-postgres}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
-      POSTGRES_DB: ${POSTGRES_DB:-openlistscraper}
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
-      interval: 5s
-      timeout: 5s
-      retries: 5
-
-volumes:
-  postgres_data:

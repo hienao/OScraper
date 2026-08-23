@@ -3,6 +3,8 @@ package service
 import (
 	"context"
 	"fmt"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -17,6 +19,35 @@ import (
 type stubDirectoryBrowser struct {
 	entries []openlist.DirectoryEntry
 	err     error
+}
+
+func TestLocalTargetDoesNotRequireConnectionAndRejectsOverlappingRoots(t *testing.T) {
+	targetService, _ := newTargetTestService(t)
+	localRoot := t.TempDir()
+	movies := filepath.Join(localRoot, "movies")
+	if err := os.MkdirAll(filepath.Join(movies, "action"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	targetService.local = newLocalStorage(localRoot)
+	target, err := targetService.Create(context.Background(), 1, SaveTargetCommand{
+		SourceType: "local", Name: "Local movies", RootPath: filepath.ToSlash(movies), LibraryType: "movie", Enabled: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if target.SourceType != "local" || target.ConnectionID != nil {
+		t.Fatalf("unexpected local target: %#v", target)
+	}
+	_, err = targetService.Create(context.Background(), 1, SaveTargetCommand{
+		SourceType: "local", Name: "Overlapping", RootPath: filepath.ToSlash(filepath.Join(movies, "action")), LibraryType: "movie", Enabled: true,
+	})
+	if err == nil {
+		t.Fatal("expected overlapping local target to fail")
+	}
+	serviceError, ok := err.(*Error)
+	if !ok || serviceError.Code != "target.local_root_overlap" {
+		t.Fatalf("unexpected overlap error: %#v", err)
+	}
 }
 
 func (s stubDirectoryBrowser) ListDirectory(context.Context, string, string, string, bool) ([]openlist.DirectoryEntry, error) {
@@ -50,7 +81,7 @@ func newTargetTestService(t *testing.T) (*TargetService, *gorm.DB) {
 
 func TestTargetCreateValidatesAccountBoundary(t *testing.T) {
 	targetService, _ := newTargetTestService(t)
-	_, err := targetService.Create(context.Background(), 1, TargetRequest{ConnectionID: 1, Name: "Escape", RootPath: "/media-old", LibraryType: "movie", Enabled: true})
+	_, err := targetService.Create(context.Background(), 1, SaveTargetCommand{ConnectionID: 1, Name: "Escape", RootPath: "/media-old", LibraryType: "movie", Enabled: true})
 	if err == nil {
 		t.Fatal("expected target outside account root to fail")
 	}
@@ -62,7 +93,7 @@ func TestTargetCreateValidatesAccountBoundary(t *testing.T) {
 
 func TestBrowseRejectsPathOutsideTargetRoot(t *testing.T) {
 	targetService, _ := newTargetTestService(t)
-	target, err := targetService.Create(context.Background(), 1, TargetRequest{ConnectionID: 1, Name: "Movies", RootPath: "/media/Movies", LibraryType: "movie", Enabled: true})
+	target, err := targetService.Create(context.Background(), 1, SaveTargetCommand{ConnectionID: 1, Name: "Movies", RootPath: "/media/Movies", LibraryType: "movie", Enabled: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -78,11 +109,12 @@ func TestBrowseRejectsPathOutsideTargetRoot(t *testing.T) {
 
 func TestDeleteTargetRemovesScanCatalogAtomically(t *testing.T) {
 	targetService, db := newTargetTestService(t)
-	target, err := targetService.Create(context.Background(), 1, TargetRequest{ConnectionID: 1, Name: "Movies", RootPath: "/media/Movies", LibraryType: "movie", Enabled: true})
+	target, err := targetService.Create(context.Background(), 1, SaveTargetCommand{ConnectionID: 1, Name: "Movies", RootPath: "/media/Movies", LibraryType: "movie", Enabled: true})
 	if err != nil {
 		t.Fatal(err)
 	}
-	scan := model.ScanRun{TargetID: target.ID, Status: "succeeded", StartedAt: time.Now(), CandidateCount: 1}
+	startedAt := time.Now()
+	scan := model.ScanRun{TargetID: target.ID, Status: "succeeded", StartedAt: &startedAt, CandidateCount: 1}
 	if err := db.Create(&scan).Error; err != nil {
 		t.Fatal(err)
 	}

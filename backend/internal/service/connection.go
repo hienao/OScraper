@@ -28,29 +28,29 @@ type ConnectionService struct {
 	client  OpenListTester
 }
 
-type ConnectionRequest struct {
-	Name     string `json:"name" binding:"required,min=1,max=100"`
-	BaseURL  string `json:"base_url" binding:"required,max=500"`
-	Token    string `json:"token" binding:"required"`
-	QPSLimit int    `json:"qps_limit" binding:"min=0,max=1000"`
-	QPMLimit int    `json:"qpm_limit" binding:"min=0,max=60000"`
+type CreateConnectionCommand struct {
+	Name     string
+	BaseURL  string
+	Token    string
+	QPSLimit int
+	QPMLimit int
 }
 
-type ConnectionUpdateRequest struct {
-	Name     string `json:"name" binding:"required,min=1,max=100"`
-	BaseURL  string `json:"base_url" binding:"required,max=500"`
-	QPSLimit int    `json:"qps_limit" binding:"min=0,max=1000"`
-	QPMLimit int    `json:"qpm_limit" binding:"min=0,max=60000"`
-	Enabled  bool   `json:"enabled"`
+type UpdateConnectionCommand struct {
+	Name     string
+	BaseURL  string
+	QPSLimit int
+	QPMLimit int
+	Enabled  bool
 }
 
-type TokenRequest struct {
-	Token string `json:"token" binding:"required"`
+type RotateTokenCommand struct {
+	Token string
 }
 
-type TestConnectionRequest struct {
-	BaseURL string `json:"base_url" binding:"required,max=500"`
-	Token   string `json:"token" binding:"required"`
+type TestConnectionCommand struct {
+	BaseURL string
+	Token   string
 }
 
 type ConnectionResponse struct {
@@ -103,7 +103,7 @@ func (s *ConnectionService) Get(id uint) (*ConnectionResponse, error) {
 	return &response, nil
 }
 
-func (s *ConnectionService) Test(ctx context.Context, request TestConnectionRequest) (*ConnectionTestResponse, error) {
+func (s *ConnectionService) Test(ctx context.Context, request TestConnectionCommand) (*ConnectionTestResponse, error) {
 	identity, err := s.client.TestConnection(ctx, request.BaseURL, strings.TrimSpace(request.Token))
 	if err != nil {
 		return nil, mapOpenListError(err)
@@ -111,7 +111,7 @@ func (s *ConnectionService) Test(ctx context.Context, request TestConnectionRequ
 	return &ConnectionTestResponse{OK: true, Username: identity.Username, BasePath: identity.BasePath}, nil
 }
 
-func (s *ConnectionService) Create(ctx context.Context, actorID uint, request ConnectionRequest) (*ConnectionResponse, error) {
+func (s *ConnectionService) Create(ctx context.Context, actorID uint, request CreateConnectionCommand) (*ConnectionResponse, error) {
 	baseURL, err := openlist.NormalizeBaseURL(request.BaseURL)
 	if err != nil {
 		return nil, mapOpenListError(err)
@@ -139,7 +139,7 @@ func (s *ConnectionService) Create(ctx context.Context, actorID uint, request Co
 	return &response, nil
 }
 
-func (s *ConnectionService) Update(id, actorID uint, request ConnectionUpdateRequest) (*ConnectionResponse, error) {
+func (s *ConnectionService) Update(id, actorID uint, request UpdateConnectionCommand) (*ConnectionResponse, error) {
 	connection, err := s.require(id)
 	if err != nil {
 		return nil, err
@@ -191,7 +191,7 @@ func (s *ConnectionService) TestSaved(ctx context.Context, id uint) (*Connection
 	return &ConnectionTestResponse{OK: true, Username: identity.Username, BasePath: identity.BasePath}, nil
 }
 
-func (s *ConnectionService) RotateToken(ctx context.Context, id, actorID uint, request TokenRequest) (*ConnectionResponse, error) {
+func (s *ConnectionService) RotateToken(ctx context.Context, id, actorID uint, request RotateTokenCommand) (*ConnectionResponse, error) {
 	connection, err := s.require(id)
 	if err != nil {
 		return nil, err

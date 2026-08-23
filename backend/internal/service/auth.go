@@ -25,19 +25,19 @@ type AuthService struct {
 	tokenHours int
 }
 
-type LoginRequest struct {
-	Username string `json:"username" binding:"required"`
-	Password string `json:"password" binding:"required"`
+type LoginCommand struct {
+	Username string
+	Password string
 }
 
-type SetupAdminRequest struct {
-	Username string `json:"username" binding:"required,min=3,max=50"`
-	Password string `json:"password" binding:"required,min=8,max=128"`
+type SetupAdminCommand struct {
+	Username string
+	Password string
 }
 
-type ChangePasswordRequest struct {
-	OldPassword string `json:"old_password" binding:"required"`
-	NewPassword string `json:"new_password" binding:"required,min=8,max=128"`
+type ChangePasswordCommand struct {
+	OldPassword string
+	NewPassword string
 }
 
 type TokenResponse struct {
@@ -71,7 +71,7 @@ func (s *AuthService) InitBootstrapAdmin() error {
 	})
 }
 
-func (s *AuthService) Login(request LoginRequest) (*TokenResponse, error) {
+func (s *AuthService) Login(request LoginCommand) (*TokenResponse, error) {
 	user, err := s.repo.FindByUsername(strings.TrimSpace(request.Username))
 	if err != nil || bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(request.Password)) != nil {
 		return nil, Unauthorized("auth.invalid_credentials", "Invalid username or password")
@@ -79,7 +79,7 @@ func (s *AuthService) Login(request LoginRequest) (*TokenResponse, error) {
 	return s.issueToken(user)
 }
 
-func (s *AuthService) SetupAdmin(userID uint, request SetupAdminRequest) (*TokenResponse, error) {
+func (s *AuthService) SetupAdmin(userID uint, request SetupAdminCommand) (*TokenResponse, error) {
 	user, err := s.repo.FindByID(userID)
 	if err != nil {
 		return nil, NotFound("auth.user_not_found", "User not found")
@@ -117,7 +117,7 @@ func (s *AuthService) Profile(userID uint) (*UserResponse, error) {
 	return toUserResponse(user), nil
 }
 
-func (s *AuthService) ChangePassword(userID uint, request ChangePasswordRequest) error {
+func (s *AuthService) ChangePassword(userID uint, request ChangePasswordCommand) error {
 	user, err := s.repo.FindByID(userID)
 	if err != nil {
 		return NotFound("auth.user_not_found", "User not found")

@@ -42,17 +42,17 @@ type CandidateInspector interface {
 	InspectCandidate(ctx context.Context, targetID, candidateID uint, refresh bool) (*CandidateInspection, error)
 }
 
-type PreviewSearchRequest struct {
-	CandidateID uint   `json:"candidate_id" binding:"required"`
-	Title       string `json:"title" binding:"max=500"`
-	Year        int    `json:"year" binding:"omitempty,min=1870,max=2200"`
+type SearchPreviewCommand struct {
+	CandidateID uint
+	Title       string
+	Year        int
 }
 
-type CreatePreviewRequest struct {
-	CandidateID uint   `json:"candidate_id" binding:"required"`
-	TMDBID      int    `json:"tmdb_id" binding:"omitempty,min=1"`
-	Title       string `json:"title" binding:"max=500"`
-	Year        int    `json:"year" binding:"omitempty,min=1870,max=2200"`
+type CreatePreviewCommand struct {
+	CandidateID uint
+	TMDBID      int
+	Title       string
+	Year        int
 }
 
 type RenameItem struct {
@@ -121,7 +121,7 @@ func NewPreviewService(db *gorm.DB, settings *SettingService, provider TMDBCatal
 	return previewService
 }
 
-func (s *PreviewService) Search(ctx context.Context, targetID uint, request PreviewSearchRequest) ([]tmdb.SearchResult, error) {
+func (s *PreviewService) Search(ctx context.Context, targetID uint, request SearchPreviewCommand) ([]tmdb.SearchResult, error) {
 	candidate, _, err := s.requireCandidate(targetID, request.CandidateID)
 	if err != nil {
 		return nil, err
@@ -162,7 +162,7 @@ func (s *PreviewService) Search(ctx context.Context, targetID uint, request Prev
 	return results, nil
 }
 
-func (s *PreviewService) Create(ctx context.Context, targetID, actorID uint, request CreatePreviewRequest) (*PreviewResponse, error) {
+func (s *PreviewService) Create(ctx context.Context, targetID, actorID uint, request CreatePreviewCommand) (*PreviewResponse, error) {
 	candidate, target, err := s.requireCandidate(targetID, request.CandidateID)
 	if err != nil {
 		return nil, err
@@ -194,7 +194,7 @@ func (s *PreviewService) Create(ctx context.Context, targetID, actorID uint, req
 		tmdbID = *candidate.TMDBID
 	}
 	if tmdbID == 0 {
-		results, searchErr := s.Search(ctx, targetID, PreviewSearchRequest{CandidateID: candidate.ID, Title: request.Title, Year: request.Year})
+		results, searchErr := s.Search(ctx, targetID, SearchPreviewCommand{CandidateID: candidate.ID, Title: request.Title, Year: request.Year})
 		if searchErr != nil {
 			return nil, searchErr
 		}

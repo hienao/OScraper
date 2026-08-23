@@ -21,11 +21,11 @@ func (h *JobHandler) Submit(c *gin.Context) {
 	if !ok {
 		return
 	}
-	var request service.SubmitJobRequest
+	var request submitJobRequest
 	if !bindJSON(c, &request) {
 		return
 	}
-	job, err := h.service.Submit(targetIDValue, currentUserID(c), request, c.GetHeader("Idempotency-Key"))
+	job, err := h.service.Submit(targetIDValue, currentUserID(c), request.command(), c.GetHeader("Idempotency-Key"))
 	if err != nil {
 		respondError(c, err)
 		return

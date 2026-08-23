@@ -5,12 +5,14 @@ import "time"
 type ScanRun struct {
 	ID             uint       `gorm:"primaryKey" json:"id"`
 	TargetID       uint       `gorm:"index;not null" json:"target_id"`
+	ActorID        uint       `gorm:"index;not null;default:0" json:"actor_id"`
+	Refresh        bool       `gorm:"not null;default:false" json:"refresh"`
 	Status         string     `gorm:"size:20;index;not null" json:"status"`
 	CandidateCount int        `gorm:"not null;default:0" json:"candidate_count"`
 	VideoCount     int        `gorm:"not null;default:0" json:"video_count"`
 	ErrorCode      string     `gorm:"size:100" json:"error_code,omitempty"`
 	ErrorMessage   string     `gorm:"type:text" json:"error_message,omitempty"`
-	StartedAt      time.Time  `gorm:"index;not null" json:"started_at"`
+	StartedAt      *time.Time `gorm:"index" json:"started_at,omitempty"`
 	CompletedAt    *time.Time `json:"completed_at,omitempty"`
 	CreatedAt      time.Time  `json:"created_at"`
 }

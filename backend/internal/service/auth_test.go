@@ -28,7 +28,7 @@ func TestBootstrapAdminMustCompleteSetup(t *testing.T) {
 	if err := service.InitBootstrapAdmin(); err != nil {
 		t.Fatal(err)
 	}
-	login, err := service.Login(LoginRequest{Username: "admin", Password: "admin"})
+	login, err := service.Login(LoginCommand{Username: "admin", Password: "admin"})
 	if err != nil || login.Token == "" {
 		t.Fatalf("bootstrap login failed: %v", err)
 	}
@@ -36,7 +36,7 @@ func TestBootstrapAdminMustCompleteSetup(t *testing.T) {
 	if err != nil || !profile.RequiresAdminSetup {
 		t.Fatalf("expected setup to be required: %#v %v", profile, err)
 	}
-	if _, err := service.SetupAdmin(1, SetupAdminRequest{Username: "owner", Password: "secure-password"}); err != nil {
+	if _, err := service.SetupAdmin(1, SetupAdminCommand{Username: "owner", Password: "secure-password"}); err != nil {
 		t.Fatal(err)
 	}
 	profile, err = service.Profile(1)

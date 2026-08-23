@@ -3,7 +3,10 @@ package service
 import (
 	"context"
 	"fmt"
+	"os"
+	"path/filepath"
 	"testing"
+	"time"
 
 	"oscraper/internal/model"
 	"oscraper/internal/openlist"
@@ -15,6 +18,38 @@ import (
 
 type catalogBrowser struct {
 	levels map[string][]openlist.DirectoryEntry
+}
+
+func TestLocalMovieScanUsesMountedDirectory(t *testing.T) {
+	root := t.TempDir()
+	library := filepath.Join(root, "movies")
+	film := filepath.Join(library, "Arrival (2016)")
+	if err := os.MkdirAll(film, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(film, "Arrival.mkv"), []byte("video"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	db, err := gorm.Open(sqlite.Open(fmt.Sprintf("file:local-catalog-%s?mode=memory&cache=shared", t.Name())), &gorm.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.AutoMigrate(&model.ScrapeTarget{}, &model.ScanRun{}, &model.MediaCandidate{}, &model.AdminAuditLog{}); err != nil {
+		t.Fatal(err)
+	}
+	target := model.ScrapeTarget{SourceType: "local", Name: "Local movies", RootPath: filepath.ToSlash(library), LibraryType: "movie", Enabled: true}
+	if err := db.Create(&target).Error; err != nil {
+		t.Fatal(err)
+	}
+	cipher, _ := cryptoutil.New("0123456789abcdef0123456789abcdef")
+	service := NewCatalogServiceWithLocalRoot(db, cipher, catalogBrowser{levels: map[string][]openlist.DirectoryEntry{}}, nil, root)
+	result, err := service.Scan(context.Background(), target.ID, 1, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.CandidateCount != 1 || result.VideoCount != 1 || result.Candidates[0].ParsedTitle != "Arrival" {
+		t.Fatalf("unexpected local scan: %#v", result)
+	}
 }
 
 func (b catalogBrowser) ListDirectory(_ context.Context, _, _, remotePath string, _ bool) ([]openlist.DirectoryEntry, error) {
@@ -47,7 +82,8 @@ func newCatalogTestService(t *testing.T, libraryType string, levels map[string][
 	if err := db.Create(&connection).Error; err != nil {
 		t.Fatal(err)
 	}
-	target := model.ScrapeTarget{ConnectionID: connection.ID, Name: "Library", RootPath: "/media/library", LibraryType: libraryType, Enabled: true}
+	connectionID := connection.ID
+	target := model.ScrapeTarget{SourceType: "openlist", ConnectionID: &connectionID, Name: "Library", RootPath: "/media/library", LibraryType: libraryType, Enabled: true}
 	if err := db.Create(&target).Error; err != nil {
 		t.Fatal(err)
 	}
@@ -80,6 +116,38 @@ func TestMovieScanFindsFoldersAndFlatVideos(t *testing.T) {
 	}
 	if result.Candidates[0].Fingerprint[:7] != "sha256:" {
 		t.Fatalf("unexpected fingerprint: %s", result.Candidates[0].Fingerprint)
+	}
+}
+
+func TestCatalogStartRecoversPendingScan(t *testing.T) {
+	service, _ := newCatalogTestService(t, "movie", map[string][]openlist.DirectoryEntry{
+		"/media/library":                {{Name: "Arrival (2016)", Path: "/media/library/Arrival (2016)", IsDir: true}},
+		"/media/library/Arrival (2016)": {{Name: "Arrival.mkv", Path: "/media/library/Arrival (2016)/Arrival.mkv", Size: 100}},
+	})
+	scan := model.ScanRun{TargetID: 1, ActorID: 7, Status: "pending"}
+	if err := service.catalog.CreateScan(&scan); err != nil {
+		t.Fatal(err)
+	}
+	if err := service.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = service.Shutdown(context.Background()) }()
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		result, err := service.GetScan(1, scan.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if result.Status == "succeeded" {
+			if result.CandidateCount != 1 || len(result.Candidates) != 1 {
+				t.Fatalf("unexpected recovered scan result: %#v", result)
+			}
+			break
+		}
+		if result.Status == "failed" || time.Now().After(deadline) {
+			t.Fatalf("pending scan was not recovered: %#v", result.ScanRun)
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
 }
 

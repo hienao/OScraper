@@ -46,15 +46,15 @@ type SettingService struct {
 	provider TMDBProvider
 }
 
-type ScrapingSettingsRequest struct {
-	APIKey       string `json:"api_key" binding:"max=500"`
-	BaseURL      string `json:"base_url" binding:"required,max=500"`
-	ImageBaseURL string `json:"image_base_url" binding:"required,max=500"`
-	Language     string `json:"language" binding:"required,max=20"`
-	Region       string `json:"region" binding:"max=2"`
-	PosterSize   string `json:"poster_size" binding:"required,max=20"`
-	BackdropSize string `json:"backdrop_size" binding:"required,max=20"`
-	Timeout      int    `json:"timeout_seconds" binding:"required,min=1,max=120"`
+type SaveScrapingSettingsCommand struct {
+	APIKey       string
+	BaseURL      string
+	ImageBaseURL string
+	Language     string
+	Region       string
+	PosterSize   string
+	BackdropSize string
+	Timeout      int
 }
 
 type ScrapingSettingsResponse struct {
@@ -82,7 +82,7 @@ func (s *SettingService) GetScraping() (*ScrapingSettingsResponse, error) {
 	return &response, nil
 }
 
-func (s *SettingService) SaveScraping(actorID uint, request ScrapingSettingsRequest) (*ScrapingSettingsResponse, error) {
+func (s *SettingService) SaveScraping(actorID uint, request SaveScrapingSettingsCommand) (*ScrapingSettingsResponse, error) {
 	config := tmdb.Config{
 		APIKey: strings.TrimSpace(request.APIKey), BaseURL: strings.TrimRight(strings.TrimSpace(request.BaseURL), "/"),
 		ImageBaseURL: strings.TrimRight(strings.TrimSpace(request.ImageBaseURL), "/"), Language: strings.TrimSpace(request.Language),

@@ -7,7 +7,9 @@ type ScrapeJob struct {
 	TargetID       uint       `gorm:"index;not null" json:"target_id"`
 	PreviewID      uint       `gorm:"index;not null" json:"preview_id"`
 	CandidateID    uint       `gorm:"index;not null" json:"candidate_id"`
-	ConnectionID   uint       `gorm:"index;not null" json:"connection_id"`
+	SourceType     string     `gorm:"size:20;index;not null;default:openlist" json:"source_type"`
+	SourceRoot     string     `gorm:"size:1000;not null;default:/" json:"source_root"`
+	ConnectionID   uint       `gorm:"index" json:"connection_id,omitempty"`
 	ActorID        uint       `gorm:"index;not null" json:"actor_id"`
 	IdempotencyKey string     `gorm:"size:100;index" json:"-"`
 	Status         string     `gorm:"size:20;index;not null" json:"status"`

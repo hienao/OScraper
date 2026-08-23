@@ -31,6 +31,13 @@ type Manager struct {
 	applicationDropped atomic.Uint64
 }
 
+type Stats struct {
+	Queued             int    `json:"queued"`
+	Capacity           int    `json:"capacity"`
+	APIDropped         uint64 `json:"api_dropped"`
+	ApplicationDropped uint64 `json:"application_dropped"`
+}
+
 func NewManager(cfg *config.Config) (*Manager, error) {
 	if err := os.MkdirAll(filepath.Dir(cfg.APILogPath), 0o755); err != nil {
 		return nil, err
@@ -90,6 +97,10 @@ func (m *Manager) SubmitApplication(entry model.ApplicationLog) {
 }
 
 func (m *Manager) Dropped() (uint64, uint64) { return m.apiDropped.Load(), m.applicationDropped.Load() }
+
+func (m *Manager) Stats() Stats {
+	return Stats{Queued: len(m.queue), Capacity: cap(m.queue), APIDropped: m.apiDropped.Load(), ApplicationDropped: m.applicationDropped.Load()}
+}
 
 func (m *Manager) writeLoop() {
 	defer m.wg.Done()

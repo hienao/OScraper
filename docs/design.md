@@ -2,14 +2,14 @@
 
 ## 1. 方案结论
 
-OScraper 定位为一个独立的、面向 OpenList 的媒体目录刮削工作台：用户配置 OpenList 连接和一个受控根目录，应用按需浏览或扫描该目录，识别电影、电视剧和动画，预览 TMDB 匹配及文件变更计划，确认后异步完成可选重命名、NFO/图片生成和元数据回传。
+OScraper 定位为一个独立的媒体目录刮削工作台：用户可以配置 OpenList 连接，或把本地目录挂载到 `/media`，再创建受控根目录。应用按需浏览或扫描该目录，识别电影、电视剧和动画，预览 TMDB 匹配及文件变更计划，确认后异步完成可选重命名、NFO/图片生成和元数据写入。
 
 应用外壳参考 Seshat：
 
 - 后端：Go + Gin + GORM
 - 前端：React + TypeScript + Vite + Appica UI + Tailwind CSS
 - 状态：TanStack Query 管理服务端数据，Zustand 管理认证会话
-- 数据库：SQLite 默认，PostgreSQL 可选
+- 数据库：仅支持 SQLite，面向单实例部署
 - 鉴权：JWT Bearer Token、`token_version` 主动失效、首次管理员初始化
 - 日志：接口日志和结构化业务日志分离，异步写入独立日志数据库
 - 部署：前端、Go API 和 Nginx 打包为单一 Docker 镜像
@@ -19,12 +19,12 @@ OScraper 定位为一个独立的、面向 OpenList 的媒体目录刮削工作�
 
 ## 2. 范围
 
-> 开发状态（2026-08-19）：首版闭环已经实现，包括鉴权与日志、OpenList 受控目录、只读扫描、TMDB 匹配、完整电影/剧集预览、分集元数据、OpenList 写入、持久化作业、检查点重试和管理 UI。真实服务灰度属于部署验收，执行步骤见 `docs/operations.md`。
+> 开发状态（2026-08-20）：首版闭环已经实现，包括鉴权与日志、OpenList/本地受控目录、只读扫描、TMDB 匹配、完整电影/剧集预览、分集元数据、存储写入、持久化作业、检查点重试和管理 UI。真实服务灰度属于部署验收，执行步骤见 `docs/operations.md`。
 
 ### 2.1 首个可用版本包含
 
 1. 管理 OpenList 连接：地址、Token、账号根路径、QPS/QPM、连接测试。
-2. 管理刮削目标：名称、OpenList 连接、受控根目录、媒体类型和重命名权限。
+2. 管理刮削目标：存储来源（OpenList/本地）、受控根目录、媒体类型和重命名权限；本地根目录必须位于 `/media`。
 3. 按需加载目录树；大型目录首次只读取当前层。
 4. 扫描目标目录并形成媒体候选：
    - 电影：第一层电影目录；根目录平铺视频按单部电影分别处理。
@@ -32,7 +32,7 @@ OScraper 定位为一个独立的、面向 OpenList 的媒体目录刮削工作�
 5. 本地正则解析文件名；低置信度时可选调用 OpenAI 兼容接口辅助识别。
 6. TMDB 搜索、按年份优选、按 TMDB ID 精确指定，以及电影/剧集详情预览。
 7. 只读预览：匹配信息、海报、背景图、目录创建、目录/文件重命名、元数据上传清单、冲突和风险提示。
-8. 确认后异步执行：可选整理目录和文件、生成 NFO、下载图片、上传到 OpenList。
+8. 确认后异步执行：可选整理目录和文件、生成 NFO、下载图片、写入 OpenList 或本地目录。
 9. 作业进度、历史、失败原因、操作级检查点和失败续跑。
 10. API 日志、业务日志、用户与系统设置管理。
 
@@ -49,7 +49,7 @@ OScraper 定位为一个独立的、面向 OpenList 的媒体目录刮削工作�
 
 - 目标目录定时扫描。
 - 对已确认规则的候选批量刮削。
-- WebSocket/SSE 实时进度；首版使用 2 秒轮询。
+- WebSocket/SSE 实时进度；首版扫描使用 1 秒轮询、写作业使用 2 秒轮询。
 - 通知渠道和媒体服务器刷新。
 - 更多元数据源及刮削 Provider 插件。
 
@@ -81,6 +81,8 @@ OpenList 的目录创建、移动、重命名和上传不是一个数据库事�
 - 新名称不能包含 `/`、`\\`、`.`、`..`，并执行长度和控制字符校验。
 - OpenList `File-Path` 请求头按 UTF-8 百分号编码，空格编码为 `%20`。
 
+本地路径还必须满足：只允许 `/media` 的真实子路径；逐层使用 `Lstat` 阻止符号链接逃逸；媒体重命名使用不覆盖目标的原子操作；元数据先写同目录临时文件并 `fsync` 后替换。跨文件系统移动不会自动退化为复制后删除。
+
 ### 3.4 只迁移领域行为
 
 从 ostrm 迁移以下行为及其测试用例：目录树加载、路径约束、媒体解析、TMDB 匹配、重命名规划、冲突检查、元数据生成、OpenList 写操作、作业检查点和续跑。Java 框架代码不进入新仓库。
@@ -95,15 +97,18 @@ flowchart LR
 
     A --> AU["Auth / RBAC"]
     A --> OS["OpenList source service"]
-    A --> SC["Scrape application service"]
-    A --> JL["Job service"]
+    A --> SC["Catalog application service"]
+    A --> JL["Job application service"]
     A --> LG["Logging service"]
 
     SC --> OP["Parser and rename planner"]
+    SC --> LS["Local storage /media"]
     SC --> TP["TMDB provider"]
     SC -. optional .-> AI["OpenAI-compatible recognizer"]
-    JL --> W["Bounded worker pool"]
+    SC --> SW["Persistent scan queue"]
+    JL --> W["Job executor / bounded queue"]
     W --> OS
+    W --> LS
     W --> NF["NFO and image generator"]
 
     A --> DB[("Business DB")]
@@ -113,7 +118,7 @@ flowchart LR
     OS --> OL["OpenList API"]
 ```
 
-首版为单进程、单副本应用。HTTP 服务和后台 Worker 在同一个 Go 进程中运行，并在退出时优雅停止接收新作业、保存检查点、刷新日志队列。因为作业工作区和日志库位于本地挂载盘，首版不承诺多副本部署。
+首版为单进程、单副本应用。`internal/app` 是组合根，统一创建 HTTP 路由、扫描运行时、Job 队列和数据清理任务，并按顺序关闭。路由层只负责协议注册，不执行初始化副作用。扫描和写作业使用彼此隔离的持久化有界队列；HTTP 创建扫描后返回 `202`，前端轮询状态。因为业务库、作业工作区和日志库位于本地挂载盘，首版不承诺多副本部署。
 
 ## 5. 技术选型
 
@@ -125,8 +130,8 @@ flowchart LR
 | 服务端状态 | TanStack Query | 目录、预览、作业和日志查询缓存及轮询 |
 | 会话状态 | Zustand | Token 与当前用户，保持职责单一 |
 | 后端 | Go、Gin | 与 Seshat 一致，部署产物小，适合 I/O 密集型刮削作业 |
-| ORM | GORM | 支持 SQLite/PostgreSQL，贴近 Seshat |
-| 数据库 | SQLite 默认、PostgreSQL 可选 | 单机开箱即用，同时保留外部数据库能力 |
+| ORM | GORM | 统一模型、事务和版本化迁移 |
+| 数据库 | SQLite | 单机开箱即用，符合应用的单实例定位 |
 | API 文档 | Swaggo | 从 Handler 注释生成 OpenAPI |
 | 认证 | JWT HS256 + BCrypt | 沿用 Seshat 模型，并用数据库版本使旧 Token 即时失效 |
 | 作业 | 数据库作业表 + 有界 Go Worker | 无需引入 Redis，满足单容器恢复和限流需求 |
@@ -180,7 +185,7 @@ backend/
 └── docs/                     # 生成的 Swagger
 ```
 
-领域包不能直接引用 Gin。Handler 负责把请求转换为命令，Service 负责事务和业务规则，OpenList/TMDB/AI 包仅处理外部协议。
+领域包不能直接引用 Gin。Handler 中的 HTTP DTO 负责 JSON/校验并转换为不带传输标签的应用命令，Service 负责用例和业务规则，OpenList/TMDB/AI 包仅处理外部协议。Job 的提交/重试/取消由 `JobService` 编排，具体存储变更和产物处理由 `JobExecutor` 执行。
 
 ## 7. 核心领域模型
 
@@ -190,7 +195,7 @@ backend/
 |---|---|---|
 | `users` | username、password_hash、is_admin、requires_admin_setup、token_version | 参考 Seshat |
 | `openlist_connections` | name、base_url、encrypted_token、username、base_path、qps、qpm、enabled | Token 只加密存储，不通过列表接口返回 |
-| `scrape_targets` | connection_id、name、root_path、library_type、rename_enabled、enabled | `library_type` 为 movie/tv/anime，不提供 auto |
+| `scrape_targets` | source_type、connection_id、name、root_path、library_type、rename_enabled、enabled | 来源为 openlist/local；本地目标不需要 connection_id |
 | `scan_runs` | target_id、status、started_at、completed_at、summary | 一次只读目录扫描 |
 | `media_candidates` | scan_id、path、kind、fingerprint、parsed_title、year、status | 电影目录、平铺电影或剧集根目录 |
 | `scrape_previews` | candidate_id、tmdb_id、media_type、fingerprint、match_json、plan_json、expires_at | 服务端执行凭据 |
@@ -519,8 +524,9 @@ flowchart LR
 
 | 容器目录 | 用途 |
 |---|---|
-| `/data/db/openlist-scraper.db` | 默认 SQLite 业务库 |
+| `/data/db/openlist-scraper.db` | SQLite 业务库 |
 | `/data/work/jobs` | 可恢复作业工作区 |
+| `/media` | 宿主机本地媒体目录，只允许本地目标访问 |
 | `/cache/logs/app/api-logs.db` | API/业务日志库 |
 | `/cache/logs/nginx` | Nginx 日志 |
 | `/cache/tmp` | 可丢弃临时缓存 |
@@ -529,9 +535,8 @@ flowchart LR
 
 | 变量 | 默认值 | 说明 |
 |---|---|---|
-| `DB_DRIVER` | `sqlite` | sqlite/postgres |
-| `DATABASE_URL` | 空 | PostgreSQL 模式必填 |
 | `SQLITE_PATH` | `/data/db/openlist-scraper.db` | SQLite 文件 |
+| `LOCAL_MEDIA_ROOT` | `/media` | 本地媒体安全根目录，容器部署不建议修改 |
 | `JWT_SECRET` | 无生产默认值 | 至少 32 位 |
 | `CREDENTIAL_ENCRYPTION_KEY` | 无 | 32-byte key 的 base64 表示 |
 | `TZ` | `UTC` | 应用时区 |
@@ -588,7 +593,7 @@ flowchart LR
 - 作业在每个操作点中断后都能幂等续跑。
 - 同一目标第二个作业被拒绝，不同目标可并发。
 - 连接和目标删除受活动作业保护。
-- SQLite 和 PostgreSQL 分别运行核心 repository 测试。
+- 使用临时 SQLite 数据库运行核心 repository 测试。
 
 ### 17.3 前端测试
 

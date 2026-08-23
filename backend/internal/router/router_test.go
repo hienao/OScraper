@@ -1,7 +1,8 @@
-package router
+package router_test
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -9,8 +10,10 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"oscraper/config"
+	"oscraper/internal/app"
 	"oscraper/internal/logging"
 	"oscraper/pkg/cryptoutil"
 	"oscraper/pkg/database"
@@ -55,7 +58,7 @@ func TestAuthenticatedConnectionTargetAndScanFlow(t *testing.T) {
 
 	temporary := t.TempDir()
 	cfg := &config.Config{
-		AppEnv: "test", GinMode: "test", ServerPort: "0", DBDriver: "sqlite",
+		AppEnv: "test", GinMode: "test", ServerPort: "0",
 		SQLitePath: filepath.Join(temporary, "business.db"), JWTSecret: "test-jwt-secret-012345678901234567890",
 		AccessTokenHours: 1, CredentialEncryptionKey: "0123456789abcdef0123456789abcdef",
 		APILogPath: filepath.Join(temporary, "logs.db"), APILogQueueSize: 100, APILogBatchSize: 10,
@@ -74,8 +77,18 @@ func TestAuthenticatedConnectionTargetAndScanFlow(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	server := httptest.NewServer(Setup(cfg, db, logManager, cipher))
+	application, err := app.New(cfg, db, logManager, cipher)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = application.Shutdown(context.Background()) }()
+	server := httptest.NewServer(application.Engine)
 	defer server.Close()
+	health := requestJSON(t, server.URL, http.MethodGet, "/api/health/ready", "", nil, http.StatusOK)
+	components := responseData(t, health)["components"].(map[string]any)
+	if components["database"].(map[string]any)["ok"] != true || components["scans"] == nil || components["maintenance"] == nil {
+		t.Fatalf("health response is missing runtime components: %s", health)
+	}
 
 	bootstrap := requestJSON(t, server.URL, http.MethodPost, "/api/auth/login", "", map[string]any{"username": "admin", "password": "admin"}, http.StatusOK)
 	bootstrapToken := responseToken(t, bootstrap)
@@ -94,8 +107,18 @@ func TestAuthenticatedConnectionTargetAndScanFlow(t *testing.T) {
 		"connection_id": connectionID, "name": "Movies", "root_path": "/media/Movies", "library_type": "movie", "rename_enabled": true, "enabled": true,
 	}, http.StatusCreated)
 	targetID := responseID(t, target)
-	scan := requestJSON(t, server.URL, http.MethodPost, fmt.Sprintf("/api/scrape-targets/%d/scans?refresh=true", targetID), token, nil, http.StatusCreated)
+	scan := requestJSON(t, server.URL, http.MethodPost, fmt.Sprintf("/api/scrape-targets/%d/scans?refresh=true", targetID), token, nil, http.StatusAccepted)
 	data := responseData(t, scan)
+	scanID := uint(data["id"].(float64))
+	deadline := time.Now().Add(5 * time.Second)
+	for data["status"] == "pending" || data["status"] == "running" {
+		if time.Now().After(deadline) {
+			t.Fatalf("scan did not finish: %s", scan)
+		}
+		time.Sleep(20 * time.Millisecond)
+		scan = requestJSON(t, server.URL, http.MethodGet, fmt.Sprintf("/api/scrape-targets/%d/scans/%d", targetID, scanID), token, nil, http.StatusOK)
+		data = responseData(t, scan)
+	}
 	if data["status"] != "succeeded" || int(data["candidate_count"].(float64)) != 1 || int(data["video_count"].(float64)) != 1 {
 		t.Fatalf("unexpected scan response: %s", scan)
 	}

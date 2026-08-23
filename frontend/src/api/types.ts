@@ -58,10 +58,12 @@ export interface UpdateConnectionInput {
 }
 
 export type LibraryType = 'movie' | 'tv' | 'anime'
+export type SourceType = 'openlist' | 'local'
 
 export interface ScrapeTarget {
   id: number
-  connection_id: number
+  source_type: SourceType
+  connection_id?: number
   connection_name: string
   name: string
   root_path: string
@@ -73,12 +75,24 @@ export interface ScrapeTarget {
 }
 
 export interface TargetInput {
-  connection_id: number
+  source_type: SourceType
+  connection_id?: number
   name: string
   root_path: string
   library_type: LibraryType
   rename_enabled: boolean
   enabled: boolean
+}
+
+export interface LocalStorageStatus {
+  root: string
+  mounted: boolean
+  readable: boolean
+  writable: boolean
+  free_bytes: number
+  total_bytes: number
+  uid: number
+  gid: number
 }
 
 export interface DirectoryNode {
@@ -118,12 +132,12 @@ export interface MediaCandidate {
 export interface ScanRun {
   id: number
   target_id: number
-  status: 'running' | 'succeeded' | 'failed'
+  status: 'pending' | 'running' | 'succeeded' | 'failed'
   candidate_count: number
   video_count: number
   error_code?: string
   error_message?: string
-  started_at: string
+  started_at?: string
   completed_at?: string
   created_at: string
   candidates?: MediaCandidate[]

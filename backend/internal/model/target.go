@@ -8,7 +8,8 @@ import (
 
 type ScrapeTarget struct {
 	ID            uint           `gorm:"primaryKey" json:"id"`
-	ConnectionID  uint           `gorm:"index;not null" json:"connection_id"`
+	SourceType    string         `gorm:"size:20;index;not null;default:openlist" json:"source_type"`
+	ConnectionID  *uint          `gorm:"index" json:"connection_id,omitempty"`
 	Name          string         `gorm:"size:100;not null" json:"name"`
 	RootPath      string         `gorm:"size:1000;not null" json:"root_path"`
 	LibraryType   string         `gorm:"size:20;index;not null" json:"library_type"`

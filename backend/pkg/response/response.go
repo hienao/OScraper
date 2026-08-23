@@ -21,6 +21,10 @@ func Created(c *gin.Context, data interface{}) {
 	c.JSON(http.StatusCreated, Response{Code: 0, Message: "success", Data: data})
 }
 
+func Accepted(c *gin.Context, data interface{}) {
+	c.JSON(http.StatusAccepted, Response{Code: 0, Message: "accepted", Data: data})
+}
+
 func Error(c *gin.Context, status int, code, message string) {
 	c.Set("error_code", code)
 	c.Set("error_message", message)

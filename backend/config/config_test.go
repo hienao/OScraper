@@ -8,7 +8,7 @@ func TestProductionRejectsPlaceholderSecrets(t *testing.T) {
 		JWTSecret:               placeholderJWTSecret,
 		CredentialEncryptionKey: placeholderCredentialKey,
 		AccessTokenHours:        24,
-		ScrapeWorkers:           2, ScrapeQueueSize: 100, MaxImageBytes: 20 << 20, JobRetentionDays: 7, LogRetentionDays: 7,
+		ScrapeWorkers:           2, ScrapeQueueSize: 100, ScanWorkers: 1, ScanQueueSize: 20, MaxImageBytes: 20 << 20, JobRetentionDays: 7, LogRetentionDays: 7, DataRetentionDays: 30,
 	}
 	if err := cfg.Validate(); err == nil {
 		t.Fatal("expected production placeholder secrets to be rejected")
@@ -21,7 +21,7 @@ func TestProductionAcceptsConfiguredSecrets(t *testing.T) {
 		JWTSecret:               "a-strong-jwt-secret-with-more-than-32-characters",
 		CredentialEncryptionKey: "abcdef0123456789abcdef0123456789",
 		AccessTokenHours:        24,
-		ScrapeWorkers:           2, ScrapeQueueSize: 100, MaxImageBytes: 20 << 20, JobRetentionDays: 7, LogRetentionDays: 7,
+		ScrapeWorkers:           2, ScrapeQueueSize: 100, ScanWorkers: 1, ScanQueueSize: 20, MaxImageBytes: 20 << 20, JobRetentionDays: 7, LogRetentionDays: 7, DataRetentionDays: 30,
 	}
 	if err := cfg.Validate(); err != nil {
 		t.Fatalf("unexpected validation error: %v", err)

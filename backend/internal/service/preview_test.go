@@ -84,7 +84,7 @@ func TestPreviewSearchPrioritizesExactYear(t *testing.T) {
 		{ID: 2, Title: "Arrival", Year: 2016, VoteAverage: 7.6},
 	}}
 	service, _ := newPreviewTestService(t, provider)
-	results, err := service.Search(context.Background(), 1, PreviewSearchRequest{CandidateID: 1})
+	results, err := service.Search(context.Background(), 1, SearchPreviewCommand{CandidateID: 1})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -96,7 +96,7 @@ func TestPreviewSearchPrioritizesExactYear(t *testing.T) {
 func TestCreatePreviewPersistsImmutableMatchAndPlan(t *testing.T) {
 	provider := &stubTMDBCatalog{detail: &tmdb.Detail{ID: 329865, MediaType: "movie", Title: "Arrival/降临", OriginalTitle: "Arrival", Year: 2016, Overview: "First snapshot", PosterURL: "https://image.example/poster.jpg", BackdropURL: "https://image.example/backdrop.jpg"}}
 	service, _ := newPreviewTestService(t, provider)
-	created, err := service.Create(context.Background(), 1, 1, CreatePreviewRequest{CandidateID: 1, TMDBID: 329865})
+	created, err := service.Create(context.Background(), 1, 1, CreatePreviewCommand{CandidateID: 1, TMDBID: 329865})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -122,7 +122,7 @@ func TestRenameDisabledKeepsMetadataAtCurrentLocation(t *testing.T) {
 	if err := db.Model(&model.ScrapeTarget{}).Where("id = ?", 1).Update("rename_enabled", false).Error; err != nil {
 		t.Fatal(err)
 	}
-	created, err := service.Create(context.Background(), 1, 1, CreatePreviewRequest{CandidateID: 1, TMDBID: 329865})
+	created, err := service.Create(context.Background(), 1, 1, CreatePreviewCommand{CandidateID: 1, TMDBID: 329865})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -142,7 +142,7 @@ func TestCreatePreviewRejectsCandidateChangedAfterScan(t *testing.T) {
 		Fingerprint: "sha256:changed",
 		Stale:       true,
 	}}
-	_, err := service.Create(context.Background(), 1, 1, CreatePreviewRequest{CandidateID: 1, TMDBID: 329865})
+	_, err := service.Create(context.Background(), 1, 1, CreatePreviewCommand{CandidateID: 1, TMDBID: 329865})
 	serviceError, ok := err.(*Error)
 	if !ok || serviceError.Code != "preview.stale" {
 		t.Fatalf("changed candidate did not reject preview creation: %#v", err)
