@@ -47,7 +47,7 @@ OScraper 镜像仅发布到 GitHub Container Registry：
 ghcr.io/hienao/oscraper
 ```
 
-下面的示例固定到当前 Beta 版本。建议使用精确版本，以便明确控制升级和回退。
+下面的示例会自动跟随最新 Beta，适合快速体验。需要受控部署时，请把 `beta` 替换为 GHCR 中的精确版本，以便明确控制升级和回退。
 
 ### 1. 准备部署目录
 
@@ -61,7 +61,7 @@ cd oscraper
 ```yaml
 services:
   oscraper:
-    image: ${OSCRAPER_IMAGE:-ghcr.io/hienao/oscraper:0.1.0-beta.1}
+    image: ${OSCRAPER_IMAGE:-ghcr.io/hienao/oscraper:beta}
     container_name: oscraper
     ports:
       - "3113:3113"
@@ -95,7 +95,7 @@ openssl rand -base64 32
 创建 `.env`，把第一个结果写入 `JWT_SECRET`，第二个结果写入 `CREDENTIAL_ENCRYPTION_KEY`：
 
 ```dotenv
-OSCRAPER_IMAGE=ghcr.io/hienao/oscraper:0.1.0-beta.1
+OSCRAPER_IMAGE=ghcr.io/hienao/oscraper:beta
 JWT_SECRET=替换为第一个命令生成的值
 CREDENTIAL_ENCRYPTION_KEY=替换为第二个命令生成的值
 TZ=Asia/Shanghai
@@ -170,7 +170,7 @@ docker compose up -d
 docker compose ps
 ```
 
-仅当部署环境需要自动跟随最新 Beta 时才使用 `ghcr.io/hienao/oscraper:beta`。正式版也会发布 `latest`，但生产部署仍建议固定精确版本。
+`beta` 标签会在每次拉取时跟随最新 Beta。正式版也会发布 `latest`，但受控环境和生产部署仍建议固定精确版本。
 
 ## 故障排查
 
