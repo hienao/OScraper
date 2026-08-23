@@ -47,7 +47,7 @@ OScraper images are published only to GitHub Container Registry:
 ghcr.io/hienao/oscraper
 ```
 
-The example below pins the current Beta version. Pinning an exact version is recommended because it makes upgrades and rollbacks deliberate.
+The example below follows the newest Beta for easy evaluation. For a controlled deployment, replace `beta` with an exact version from the GHCR package so upgrades and rollbacks stay deliberate.
 
 ### 1. Prepare the deployment directory
 
@@ -61,7 +61,7 @@ Create `compose.yaml`:
 ```yaml
 services:
   oscraper:
-    image: ${OSCRAPER_IMAGE:-ghcr.io/hienao/oscraper:0.1.0-beta.1}
+    image: ${OSCRAPER_IMAGE:-ghcr.io/hienao/oscraper:beta}
     container_name: oscraper
     ports:
       - "3113:3113"
@@ -95,7 +95,7 @@ openssl rand -base64 32
 Create `.env` and place the first value in `JWT_SECRET` and the second value in `CREDENTIAL_ENCRYPTION_KEY`:
 
 ```dotenv
-OSCRAPER_IMAGE=ghcr.io/hienao/oscraper:0.1.0-beta.1
+OSCRAPER_IMAGE=ghcr.io/hienao/oscraper:beta
 JWT_SECRET=replace-with-the-first-generated-value
 CREDENTIAL_ENCRYPTION_KEY=replace-with-the-second-generated-value
 TZ=Asia/Shanghai
@@ -170,7 +170,7 @@ docker compose up -d
 docker compose ps
 ```
 
-Use `ghcr.io/hienao/oscraper:beta` only if the deployment should automatically follow the newest Beta. Stable releases also publish `latest`, but production deployments should pin an exact version.
+The `beta` tag follows the newest Beta whenever you pull again. Stable releases also publish `latest`, but controlled and production deployments should pin an exact version.
 
 ## Troubleshooting
 
