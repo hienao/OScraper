@@ -121,6 +121,13 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          host_uid="$(id -u)"
+          host_gid="$(id -g)"
+          data_dir="${RUNNER_TEMP}/oscraper-release-data-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          cache_dir="${RUNNER_TEMP}/oscraper-release-cache-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          media_dir="${RUNNER_TEMP}/oscraper-release-media-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          mkdir -p "${data_dir}" "${cache_dir}" "${media_dir}"
+          media_owner_before="$(stat -c '%u:%g' "${media_dir}")"
           cleanup() {
             docker rm --force oscraper-release-check >/dev/null 2>&1 || true
           }
@@ -129,12 +136,26 @@ jobs:
             --env APP_ENV=production \
             --env JWT_SECRET=release-check-jwt-secret-with-at-least-32-characters \
             --env CREDENTIAL_ENCRYPTION_KEY=abcdef0123456789abcdef0123456789 \
+            --env PUID="${host_uid}" \
+            --env PGID="${host_gid}" \
+            --env UMASK=027 \
+            --volume "${data_dir}:/data" \
+            --volume "${cache_dir}:/cache" \
+            --volume "${media_dir}:/media" \
             oscraper:release-check >/dev/null
 
           for attempt in $(seq 1 30); do
             if response="$(docker exec oscraper-release-check wget -qO- http://127.0.0.1:3113/api/health 2>/dev/null)"; then
               echo "${response}"
               echo "${response}" | grep -q '"status":"ok"'
+              docker exec oscraper-release-check sh -eu -c '
+                awk -v expected="$PUID" '\''$1 == "Uid:" { exit !($2 == expected) }'\'' /proc/1/status
+                awk -v expected="$PGID" '\''$1 == "Gid:" { exit !($2 == expected) }'\'' /proc/1/status
+                grep -Eq "^Umask:[[:space:]]+0027$" /proc/1/status
+                test "$(stat -c "%u:%g" /data/db)" = "$PUID:$PGID"
+                test "$(stat -c "%u:%g" /cache/logs)" = "$PUID:$PGID"
+              '
+              test "$(stat -c '%u:%g' "${media_dir}")" = "${media_owner_before}"
               exit 0
             fi
             if [[ "$(docker inspect --format '{{.State.Running}}' oscraper-release-check)" != "true" ]]; then

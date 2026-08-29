@@ -8,12 +8,16 @@
 2. 应用仅支持 SQLite 和单实例部署；不要让多个应用容器同时挂载或访问同一个 SQLite 文件。
 3. `/data` 保存业务数据库和作业工作区，`/cache` 保存可清理的 API/应用日志。审计日志位于业务数据库，不随日志保留期删除。
 4. OpenList Token 至少需要目标目录的读取、创建目录、移动、重命名和上传权限。建议使用只覆盖媒体库根目录的专用账号。
-5. 本地刮削通过 `HOST_MEDIA_DIR` 挂载到容器 `/media`；扫描需要读取权限，重命名和元数据写入需要写入权限。本地目标不跟随符号链接。
+5. Linux/NAS 部署请执行 `id 运行用户`，将 UID 和主 GID 配置为 `PUID`、`PGID`。容器只会自动初始化 `/data`、`/cache` 的所有权，不会修改 `/media`。
+6. 本地刮削通过 `HOST_MEDIA_DIR` 挂载到容器 `/media`；扫描需要该 `PUID:PGID` 具备读取权限，重命名和元数据写入还需要写入权限。本地目标不跟随符号链接。
 
 关键参数：
 
 | 参数 | 默认值 | 说明 |
 | --- | ---: | --- |
+| `PUID` | 1000 | Nginx 与 OScraper 的运行用户 ID，必须大于 0 |
+| `PGID` | 1000 | Nginx 与 OScraper 的运行组 ID，必须大于 0 |
+| `UMASK` | 002 | 新建文件和目录的权限掩码，可使用三位或四位八进制格式 |
 | `SCRAPE_WORKERS` | 2 | 并发 Worker，允许 1–4；同一 OpenList 连接的写操作仍串行 |
 | `SCRAPE_QUEUE_SIZE` | 100 | 等待与运行作业的有界容量 |
 | `SCAN_WORKERS` | 1 | 目录扫描并发数，允许 1–4；与写作业 Worker 隔离 |
@@ -27,9 +31,12 @@
 
 ```env
 HOST_MEDIA_DIR=/mnt/nas/media
+PUID=1026
+PGID=100
+UMASK=002
 ```
 
-容器内会看到 `/media/movies`、`/media/tv` 等子目录。不同本地刮削目标不能使用互相包含的根目录；本地写作业全局串行，且不支持跨文件系统移动。
+上面的 UID/GID 仅为示例，请以宿主机 `id 运行用户` 的输出为准。容器内会看到 `/media/movies`、`/media/tv` 等子目录。不同本地刮削目标不能使用互相包含的根目录；本地写作业全局串行，且不支持跨文件系统移动。
 
 ## 2. 备份与恢复
 
@@ -76,7 +83,7 @@ docker compose start app
 - `scan.queue_full`：等待现有目录扫描结束，或调整独立的 `SCAN_QUEUE_SIZE`；扫描任务已持久化，进程重启后会继续处理未完成任务。
 - `job.invalid_image_type` / `job.image_too_large`：检查 TMDB 图片代理响应和 `MAX_IMAGE_BYTES`。
 - SQLite `busy/locked`：确认只有一个应用实例访问文件，并确认挂载存储支持文件锁；本应用不支持多实例共享数据库。
-- `local.not_mounted` / `local.permission_denied`：检查 `HOST_MEDIA_DIR` 是否正确挂载，以及容器用户对宿主机目录的 UID/GID 和权限。
+- `local.not_mounted` / `local.permission_denied`：检查 `HOST_MEDIA_DIR` 是否正确挂载，并确认 `PUID`/`PGID` 与拥有媒体目录访问权的宿主机用户匹配。容器不会自动修改 `/media` 权限。
 - `local.cross_device_move`：源和目标落在不同文件系统；首版不会自动复制后删除，请调整挂载或目标目录。
 
 应用收到 SIGTERM 后会停止接收新 HTTP 请求并等待作业退出，最长 10 秒。尚未安全结束的作业会在下次启动时标记为可重试。

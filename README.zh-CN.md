@@ -70,6 +70,9 @@ services:
       JWT_SECRET: ${JWT_SECRET:?JWT_SECRET is required}
       CREDENTIAL_ENCRYPTION_KEY: ${CREDENTIAL_ENCRYPTION_KEY:?CREDENTIAL_ENCRYPTION_KEY is required}
       TZ: ${TZ:-UTC}
+      PUID: ${PUID:-1000}
+      PGID: ${PGID:-1000}
+      UMASK: "${UMASK:-002}"
       SCRAPE_WORKERS: ${SCRAPE_WORKERS:-2}
       SCAN_WORKERS: ${SCAN_WORKERS:-1}
     volumes:
@@ -100,6 +103,11 @@ JWT_SECRET=替换为第一个命令生成的值
 CREDENTIAL_ENCRYPTION_KEY=替换为第二个命令生成的值
 TZ=Asia/Shanghai
 
+# Linux/NAS 环境请设置为 HOST_MEDIA_DIR 所属用户。
+PUID=1000
+PGID=1000
+UMASK=002
+
 # 暴露给本地刮削目标的宿主机目录，在容器内对应 /media。
 HOST_MEDIA_DIR=./media
 
@@ -109,6 +117,8 @@ SCAN_WORKERS=1
 ```
 
 请妥善保存并始终保持 `CREDENTIAL_ENCRYPTION_KEY` 不变。该密钥丢失或更换后，已经保存的 OpenList Token 和 TMDB Key 将无法解密。
+
+Linux 和 NAS 用户请在宿主机执行 `id 你的用户名`，把输出的 UID 和主 GID 分别填入 `PUID`、`PGID`。启动进程会初始化 `/data` 和 `/cache`，随后让 Nginx 与 OScraper 使用该非 root 身份运行，并且绝不会修改 `/media` 的所有权。`UMASK=002` 允许所有者和同组用户写入；不需要同组写入时可使用 `022`。
 
 如果 GHCR 包为私有状态，需要先登录：
 
@@ -156,7 +166,7 @@ http://localhost:3113/api/health/ready
 | `/cache` | API/应用日志及临时缓存 | 建议持久化，示例使用 `oscraper-cache` |
 | `/media` | 暴露给本地刮削目标的宿主机媒体 | 仅本地目标需要 |
 
-容器使用非 root 用户运行。扫描要求 `HOST_MEDIA_DIR` 可读，重命名或写入元数据要求该目录可写。本地目标中的符号链接会被主动忽略或拒绝。
+容器启动时仅使用必要的 root 权限初始化 `/data` 和 `/cache`，随后让 Nginx 与 OScraper 使用配置的非 root `PUID:PGID` 运行。扫描要求该身份原本就能读取 `HOST_MEDIA_DIR`，重命名或写入元数据还要求可写；OScraper 不会修改媒体库所有权。本地目标中的符号链接会被主动忽略或拒绝。
 
 OScraper 仅支持单实例运行。应用使用 SQLite 和本地作业检查点，请勿让多个运行中的容器同时挂载同一个 `/data` 卷。
 
@@ -183,7 +193,7 @@ docker compose logs --tail=200 oscraper
 常见检查项：
 
 - **容器无法启动**：确认 `JWT_SECRET` 不少于 32 个字符，`CREDENTIAL_ENCRYPTION_KEY` 是原始 32 字节值或 32 字节值的 Base64 编码。
-- **本地媒体不可用**：检查 `HOST_MEDIA_DIR`、Docker 文件共享配置及宿主机读写权限。
+- **本地媒体不可用**：执行 `id 你的用户名`，设置匹配的 `PUID`/`PGID`，并检查 `HOST_MEDIA_DIR` 和 Docker 文件共享配置。
 - **OpenList 测试失败**：检查服务地址、Token、账号根目录和所需权限。
 - **TMDB 测试失败**：检查 API Key、元数据地区/语言、代理和出站网络。
 - **预览已过期**：扫描后源目录发生了变化，需要重新扫描并生成预览。
