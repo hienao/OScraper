@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -23,6 +24,8 @@ type Config struct {
 	Region       string
 	PosterSize   string
 	BackdropSize string
+	ProxyHost    string
+	ProxyPort    int
 	Timeout      time.Duration
 }
 
@@ -253,7 +256,10 @@ func (c *Client) get(ctx context.Context, config Config, endpoint string, parame
 	if timeout <= 0 {
 		timeout = 20 * time.Second
 	}
-	client := &http.Client{Timeout: timeout}
+	client, err := HTTPClient(config, timeout)
+	if err != nil {
+		return nil, err
+	}
 	response, err := client.Do(request)
 	if err != nil {
 		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
@@ -278,6 +284,26 @@ func (c *Client) get(ctx context.Context, config Config, endpoint string, parame
 		return nil, &Error{Code: "tmdb.http_error", Message: fmt.Sprintf("TMDB returned HTTP %d", response.StatusCode)}
 	}
 	return body, nil
+}
+
+func HTTPClient(config Config, timeout time.Duration) (*http.Client, error) {
+	if timeout <= 0 {
+		timeout = 20 * time.Second
+	}
+	transport, ok := http.DefaultTransport.(*http.Transport)
+	if !ok {
+		return nil, &Error{Code: "tmdb.proxy_failed", Message: "Could not configure the TMDB HTTP client"}
+	}
+	configured := transport.Clone()
+	configured.Proxy = nil
+	if strings.TrimSpace(config.ProxyHost) != "" || config.ProxyPort != 0 {
+		if strings.TrimSpace(config.ProxyHost) == "" || config.ProxyPort < 1 || config.ProxyPort > 65535 {
+			return nil, &Error{Code: "tmdb.invalid_proxy", Message: "TMDB proxy host and port are invalid"}
+		}
+		proxyURL := &url.URL{Scheme: "http", Host: net.JoinHostPort(strings.TrimSpace(config.ProxyHost), strconv.Itoa(config.ProxyPort))}
+		configured.Proxy = http.ProxyURL(proxyURL)
+	}
+	return &http.Client{Timeout: timeout, Transport: configured}, nil
 }
 
 func normalizeBaseURL(raw, fallback string) (string, error) {

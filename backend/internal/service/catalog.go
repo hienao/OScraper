@@ -39,6 +39,7 @@ type CatalogService struct {
 	active      map[uint]struct{}
 	quota       *ConnectionQuota
 	local       *localStorage
+	recognizer  MediaRecognizer
 	rootCtx     context.Context
 	cancel      context.CancelFunc
 	slots       chan struct{}
@@ -46,6 +47,10 @@ type CatalogService struct {
 	wait        sync.WaitGroup
 	startOnce   sync.Once
 	startErr    error
+}
+
+type MediaRecognizer interface {
+	Recognize(ctx context.Context, fileName, relativePath, libraryType string) (media.Info, bool, error)
 }
 
 type catalogSource struct {
@@ -90,7 +95,7 @@ func NewCatalogServiceWithLocalRoot(db *gorm.DB, cipher *cryptoutil.Cipher, clie
 	return NewCatalogServiceWithRuntime(db, cipher, client, quota, localRoot, 1, 20)
 }
 
-func NewCatalogServiceWithRuntime(db *gorm.DB, cipher *cryptoutil.Cipher, client DirectoryBrowser, quota *ConnectionQuota, localRoot string, workers, queueSize int) *CatalogService {
+func NewCatalogServiceWithRuntime(db *gorm.DB, cipher *cryptoutil.Cipher, client DirectoryBrowser, quota *ConnectionQuota, localRoot string, workers, queueSize int, recognizers ...MediaRecognizer) *CatalogService {
 	if workers < 1 {
 		workers = 1
 	}
@@ -106,6 +111,9 @@ func NewCatalogServiceWithRuntime(db *gorm.DB, cipher *cryptoutil.Cipher, client
 	}
 	if quota != nil {
 		service.quota = quota
+	}
+	if len(recognizers) > 0 {
+		service.recognizer = recognizers[0]
 	}
 	return service
 }
@@ -404,6 +412,7 @@ func (s *CatalogService) discover(ctx context.Context, target *model.ScrapeTarge
 		}
 		if target.LibraryType == "movie" && !entry.IsDir && media.IsVideoFile(entry.Name) {
 			info := media.ParseCandidate(strings.TrimSuffix(entry.Name, path.Ext(entry.Name)), entry.Name, target.LibraryType)
+			info = s.recognizeIfNeeded(ctx, info, entry.Name, entry.Name, target.LibraryType)
 			candidates = append(candidates, makeCandidate(entry.Path, target.LibraryType, info, entry.Name, 1, relatedFlatAssets(entry.Path, rootEntries)))
 			continue
 		}
@@ -418,10 +427,29 @@ func (s *CatalogService) discover(ctx context.Context, target *model.ScrapeTarge
 			continue
 		}
 		info := media.ParseCandidate(entry.Name, files.representative, target.LibraryType)
+		info = s.recognizeIfNeeded(ctx, info, path.Base(files.representative), path.Join(entry.Name, files.representative), target.LibraryType)
 		candidates = append(candidates, makeCandidate(entry.Path, target.LibraryType, info, files.representative, files.videos, files.entries))
 	}
 	sort.Slice(candidates, func(i, j int) bool { return candidates[i].Path < candidates[j].Path })
 	return candidates, nil
+}
+
+func (s *CatalogService) recognizeIfNeeded(ctx context.Context, parsed media.Info, fileName, relativePath, libraryType string) media.Info {
+	if s.recognizer == nil || parsed.Confidence >= 70 || parsed.TMDBID != nil {
+		return parsed
+	}
+	recognized, ok, err := s.recognizer.Recognize(ctx, fileName, relativePath, libraryType)
+	if err != nil {
+		logging.Warn("scan", "AI media recognition failed; using local parser result", logging.Fields{"path": relativePath, "error": err})
+		return parsed
+	}
+	if !ok {
+		return parsed
+	}
+	if recognized.TMDBID == nil {
+		recognized.TMDBID = parsed.TMDBID
+	}
+	return recognized
 }
 
 func (s *CatalogService) walk(ctx context.Context, source *catalogSource, candidateRoot, currentPath string, depth int, refresh bool, state *scanState) (candidateFiles, error) {

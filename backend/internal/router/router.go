@@ -83,6 +83,7 @@ func New(cfg *config.Config, db *gorm.DB, logManager *logging.Manager, dependenc
 			connections.DELETE("/:id", connectionHandler.Delete)
 			connections.POST("/:id/test", connectionHandler.TestSaved)
 			connections.POST("/:id/rotate-token", connectionHandler.RotateToken)
+			connections.GET("/:id/tree", targetHandler.BrowseConnection)
 		}
 
 		targets := api.Group("/scrape-targets", middleware.JWTAuth(cfg, db), middleware.AdminSetupComplete(), middleware.AdminOnly())
@@ -124,6 +125,7 @@ func New(cfg *config.Config, db *gorm.DB, logManager *logging.Manager, dependenc
 			settings.GET("/scraping", settingHandler.GetScraping)
 			settings.PUT("/scraping", settingHandler.SaveScraping)
 			settings.POST("/scraping/test-tmdb", settingHandler.TestTMDB)
+			settings.POST("/scraping/test-ai", settingHandler.TestAI)
 		}
 
 		admin := api.Group("/admin", middleware.JWTAuth(cfg, db), middleware.AdminSetupComplete(), middleware.AdminOnly())

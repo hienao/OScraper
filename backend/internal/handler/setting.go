@@ -42,3 +42,11 @@ func (h *SettingHandler) TestTMDB(c *gin.Context) {
 	}
 	response.Success(c, gin.H{"ok": true})
 }
+
+func (h *SettingHandler) TestAI(c *gin.Context) {
+	if err := h.service.TestAI(c.Request.Context()); err != nil {
+		respondError(c, err)
+		return
+	}
+	response.Success(c, gin.H{"ok": true})
+}

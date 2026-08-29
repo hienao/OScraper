@@ -12,6 +12,7 @@ services:
       TZ: ${TZ:-UTC}
       PUID: ${PUID:-1000}
       PGID: ${PGID:-1000}
+      MEDIA_GID: ${MEDIA_GID:-}
       UMASK: "${UMASK:-002}"
       API_LOG_QUEUE_SIZE: ${API_LOG_QUEUE_SIZE:-5000}
       API_LOG_BATCH_SIZE: ${API_LOG_BATCH_SIZE:-100}

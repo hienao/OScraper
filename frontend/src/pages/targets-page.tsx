@@ -3,11 +3,12 @@ import { Badge } from '@appica/ui-react/badge'
 import { Button } from '@appica/ui-react/button'
 import { Input } from '@appica/ui-react/input'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import type { TFunction } from 'i18next'
 import { useState, type FormEvent } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useNavigate } from 'react-router-dom'
 import { connectionApi, jobApi, localStorageApi, previewApi, targetApi } from '@/api/services'
-import type { LibraryType, MediaCandidate, ScanRun, ScrapePreview, ScrapeTarget, SourceType, TargetInput, TMDBSearchResult } from '@/api/types'
+import type { LibraryType, LocalStorageStatus, MediaCandidate, ScanRun, ScrapePreview, ScrapeTarget, SourceType, TargetInput, TMDBSearchResult } from '@/api/types'
 import { AppDialog } from '@/components/common/app-dialog'
 import { AppSelect } from '@/components/common/app-select'
 import { CheckboxField } from '@/components/common/checkbox-field'
@@ -17,6 +18,24 @@ import { Panel } from '@/components/common/panel'
 import { errorMessage } from '@/lib/error-message'
 
 const emptyForm: TargetInput = { source_type: 'openlist', connection_id: 0, name: '', root_path: '/', library_type: 'movie', rename_enabled: false, enabled: true }
+
+function normalizeRemotePath(value: string) {
+  return value.replace(/\/+$/, '') || '/'
+}
+
+function isWithinRemotePath(rootPath: string, candidatePath: string) {
+  const root = normalizeRemotePath(rootPath)
+  const candidate = normalizeRemotePath(candidatePath)
+  return root === '/' ? candidate.startsWith('/') : candidate === root || candidate.startsWith(`${root}/`)
+}
+
+function localStatusDescription(status: LocalStorageStatus, t: TFunction) {
+  const groups = Array.from(new Set([status.gid, ...status.groups])).join(', ')
+  if (!status.mounted) return t('targets.localNotMounted', { root: status.root })
+  if (!status.readable) return t('targets.localUnreadable', { root: status.root, uid: status.uid, groups })
+  if (!status.writable) return t('targets.localReadOnly', { root: status.root, uid: status.uid, groups })
+  return t('targets.localWritable', { root: status.root, uid: status.uid, groups })
+}
 
 export function TargetsPage() {
   const { t } = useTranslation()
@@ -32,6 +51,8 @@ export function TargetsPage() {
   const [browserPath, setBrowserPath] = useState('')
   const [localBrowserOpen, setLocalBrowserOpen] = useState(false)
   const [localBrowserPath, setLocalBrowserPath] = useState('/media')
+  const [remoteBrowserOpen, setRemoteBrowserOpen] = useState(false)
+  const [remoteBrowserPath, setRemoteBrowserPath] = useState('/')
   const [scanTarget, setScanTarget] = useState<ScrapeTarget | null>(null)
   const [scanResult, setScanResult] = useState<ScanRun | null>(null)
   const [matchCandidate, setMatchCandidate] = useState<MediaCandidate | null>(null)
@@ -93,11 +114,20 @@ export function TargetsPage() {
     queryFn: () => localStorageApi.tree(localBrowserPath),
     enabled: localBrowserOpen,
   })
+  const remoteTree = useQuery({
+    queryKey: ['openlist-connection-tree', form.connection_id, remoteBrowserPath],
+    queryFn: () => connectionApi.tree(form.connection_id!, remoteBrowserPath),
+    enabled: remoteBrowserOpen && Boolean(form.connection_id),
+  })
+
+  const enabledConnections = (connections.data ?? []).filter((connection) => connection.enabled)
+  const selectedConnection = connections.data?.find((connection) => connection.id === form.connection_id)
+  const localRoot = localStatus.data?.root ?? '/media'
 
   function openCreate() {
     setEditing(null)
-    const connectionID = connections.data?.[0]?.id
-    setForm({ ...emptyForm, source_type: connectionID ? 'openlist' : 'local', connection_id: connectionID, root_path: connectionID ? '/' : '/media' })
+    const connection = enabledConnections[0]
+    setForm({ ...emptyForm, source_type: connection ? 'openlist' : 'local', connection_id: connection?.id, root_path: connection ? normalizeRemotePath(connection.base_path) : localRoot })
     setNotice(null)
     setFormOpen(true)
   }
@@ -158,18 +188,39 @@ export function TargetsPage() {
   }
 
   function changeSource(source: SourceType) {
-    setForm({ ...form, source_type: source, connection_id: source === 'openlist' ? connections.data?.[0]?.id : undefined, root_path: source === 'local' ? '/media' : '/' })
+    const connection = enabledConnections[0]
+    setForm({ ...form, source_type: source, connection_id: source === 'openlist' ? connection?.id : undefined, root_path: source === 'local' ? localRoot : normalizeRemotePath(connection?.base_path ?? '/') })
+  }
+
+  function changeConnection(connectionID: number) {
+    const connection = connections.data?.find((item) => item.id === connectionID)
+    setForm({ ...form, connection_id: connectionID, root_path: normalizeRemotePath(connection?.base_path ?? '/') })
   }
 
   function openLocalBrowser() {
-    setLocalBrowserPath(form.root_path.startsWith('/media') ? form.root_path : '/media')
+    setLocalBrowserPath(form.root_path === localRoot || form.root_path.startsWith(`${localRoot}/`) ? form.root_path : localRoot)
     setLocalBrowserOpen(true)
   }
 
   function localGoUp() {
-    if (localBrowserPath === '/media') return
+    if (localBrowserPath === localRoot) return
     const slash = localBrowserPath.lastIndexOf('/')
-    setLocalBrowserPath(slash <= '/media'.length ? '/media' : localBrowserPath.slice(0, slash))
+    setLocalBrowserPath(slash <= localRoot.length ? localRoot : localBrowserPath.slice(0, slash))
+  }
+
+  function openRemoteBrowser() {
+    const rootPath = normalizeRemotePath(selectedConnection?.base_path ?? '/')
+    const initialPath = isWithinRemotePath(rootPath, form.root_path) ? form.root_path : rootPath
+    setRemoteBrowserPath(initialPath)
+    setRemoteBrowserOpen(true)
+  }
+
+  function remoteGoUp() {
+    const rootPath = normalizeRemotePath(remoteTree.data?.root_path ?? selectedConnection?.base_path ?? '/')
+    if (remoteBrowserPath === rootPath) return
+    const slash = remoteBrowserPath.lastIndexOf('/')
+    const parent = slash <= 0 ? '/' : remoteBrowserPath.slice(0, slash)
+    setRemoteBrowserPath(isWithinRemotePath(rootPath, parent) ? parent : rootPath)
   }
 
   const saving = create.isPending || update.isPending
@@ -202,16 +253,26 @@ export function TargetsPage() {
 
       <AppDialog open={formOpen} onOpenChange={setFormOpen} width="sm" closeLabel={t('common.close')} title={t(editing ? 'targets.editTitle' : 'targets.createTitle')} description={t('targets.createDescription')} onSubmit={(event) => void submit(event)} bodyClassName="space-y-4" footer={<><Button type="button" variant="ghost" onClick={() => setFormOpen(false)}>{t('common.cancel')}</Button><Button type="submit" className="gap-2" disabled={saving || (form.source_type === 'openlist' && !form.connection_id)}>{saving ? t('targets.saving') : <><Check size={16} />{t('common.save')}</>}</Button></>}>
         <FormField label={t('targets.name')}><Input value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} placeholder={t('targets.placeholderName')} required maxLength={100} /></FormField>
-        <FormField label={t('targets.sourceType')}><AppSelect value={form.source_type} onValueChange={(value) => changeSource(value as SourceType)} ariaLabel={t('targets.sourceType')} options={[{ value: 'openlist', label: t('targets.source.openlist'), disabled: !connections.data?.length }, { value: 'local', label: t('targets.source.local') }]} /></FormField>
-        {form.source_type === 'openlist' && <FormField label={t('targets.connection')}><AppSelect value={String(form.connection_id ?? '')} onValueChange={(value) => setForm({ ...form, connection_id: Number(value) })} ariaLabel={t('targets.connection')} options={(connections.data ?? []).map((connection) => ({ value: String(connection.id), label: connection.name }))} /></FormField>}
-        <FormField label={t('targets.rootPath')} description={form.source_type === 'local' ? t(localStatus.data?.writable ? 'targets.localWritable' : 'targets.localReadOnly') : undefined}><div className="flex gap-2"><Input value={form.root_path} onChange={(event) => setForm({ ...form, root_path: event.target.value })} placeholder={form.source_type === 'local' ? '/media/movies' : '/Movies'} required />{form.source_type === 'local' && <Button type="button" variant="outline" onClick={openLocalBrowser}>{t('targets.choose')}</Button>}</div></FormField>
+        <FormField label={t('targets.sourceType')}><AppSelect value={form.source_type} onValueChange={(value) => changeSource(value as SourceType)} ariaLabel={t('targets.sourceType')} options={[{ value: 'openlist', label: t('targets.source.openlist'), disabled: enabledConnections.length === 0 }, { value: 'local', label: t('targets.source.local') }]} /></FormField>
+        {form.source_type === 'openlist' && <FormField label={t('targets.connection')}><AppSelect value={String(form.connection_id ?? '')} onValueChange={(value) => changeConnection(Number(value))} ariaLabel={t('targets.connection')} options={(connections.data ?? []).map((connection) => ({ value: String(connection.id), label: connection.name, disabled: !connection.enabled }))} /></FormField>}
+        <FormField label={t('targets.rootPath')} description={form.source_type === 'local' && localStatus.data ? localStatusDescription(localStatus.data, t) : undefined}><div className="flex gap-2"><Input value={form.root_path} readOnly required /><Button type="button" variant="outline" disabled={form.source_type === 'openlist' && !form.connection_id} onClick={form.source_type === 'local' ? openLocalBrowser : openRemoteBrowser}>{t('targets.choose')}</Button></div></FormField>
         <FormField label={t('targets.libraryType')}><AppSelect value={form.library_type} onValueChange={(library_type) => setForm({ ...form, library_type: library_type as LibraryType })} ariaLabel={t('targets.libraryType')} options={(['movie', 'tv', 'anime'] as LibraryType[]).map((type) => ({ value: type, label: t(`targets.${type}`) }))} /></FormField>
         <CheckboxField checked={form.rename_enabled} onCheckedChange={(rename_enabled) => setForm({ ...form, rename_enabled })} label={t('targets.rename')} description={t('targets.renameWarning')} />
         {editing && <CheckboxField checked={form.enabled} onCheckedChange={(enabled) => setForm({ ...form, enabled })} label={t('targets.enabled')} />}
       </AppDialog>
 
+      <AppDialog open={remoteBrowserOpen} onOpenChange={setRemoteBrowserOpen} width="md" closeLabel={t('common.close')} title={t('targets.openListBrowserTitle')} description={<span className="break-all font-mono text-xs">{remoteBrowserPath}</span>}>
+            <div className="mt-5 flex flex-wrap gap-2"><Button size="sm" variant="outline" className="gap-2" disabled={remoteBrowserPath === normalizeRemotePath(remoteTree.data?.root_path ?? selectedConnection?.base_path ?? '/')} onClick={remoteGoUp}><ArrowLeft size={15} />{t('targets.up')}</Button><Button size="sm" onClick={() => { setForm({ ...form, root_path: remoteBrowserPath }); setRemoteBrowserOpen(false) }}>{t('targets.selectDirectory')}</Button></div>
+            <div className="mt-4 overflow-x-clip rounded-xl border border-neutral-200 dark:border-neutral-800">
+              {remoteTree.isLoading && <p className="p-5 text-sm text-neutral-500">{t('common.loading')}</p>}
+              {remoteTree.error && <div className="p-4"><Message variant="error">{errorMessage(remoteTree.error, t('targets.browserError'))}</Message></div>}
+              {remoteTree.data?.entries.filter((entry) => entry.is_dir).length === 0 && <p className="p-8 text-center text-sm text-neutral-500">{t('targets.noEntries')}</p>}
+              {remoteTree.data?.entries.filter((entry) => entry.is_dir).map((entry) => <button key={entry.path} type="button" onClick={() => setRemoteBrowserPath(entry.path)} className="flex w-full min-w-0 items-center gap-3 border-b border-neutral-200 px-4 py-3 text-left last:border-0 hover:bg-neutral-50 dark:border-neutral-800 dark:hover:bg-neutral-900"><span className="grid size-9 shrink-0 place-items-center rounded-lg bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300"><Package size={17} /></span><span className="min-w-0 flex-1"><span className="block truncate text-sm font-medium">{entry.name}</span></span></button>)}
+            </div>
+      </AppDialog>
+
       <AppDialog open={localBrowserOpen} onOpenChange={setLocalBrowserOpen} width="md" closeLabel={t('common.close')} title={t('targets.localBrowserTitle')} description={<span className="break-all font-mono text-xs">{localBrowserPath}</span>}>
-            <div className="mt-5 flex flex-wrap gap-2"><Button size="sm" variant="outline" className="gap-2" disabled={localBrowserPath === '/media'} onClick={localGoUp}><ArrowLeft size={15} />{t('targets.up')}</Button><Button size="sm" onClick={() => { setForm({ ...form, root_path: localBrowserPath }); setLocalBrowserOpen(false) }}>{t('targets.selectDirectory')}</Button></div>
+            <div className="mt-5 flex flex-wrap gap-2"><Button size="sm" variant="outline" className="gap-2" disabled={localBrowserPath === localRoot} onClick={localGoUp}><ArrowLeft size={15} />{t('targets.up')}</Button><Button size="sm" onClick={() => { setForm({ ...form, root_path: localBrowserPath }); setLocalBrowserOpen(false) }}>{t('targets.selectDirectory')}</Button></div>
             <div className="mt-4 overflow-x-clip rounded-xl border border-neutral-200 dark:border-neutral-800">
               {localTree.isLoading && <p className="p-5 text-sm text-neutral-500">{t('common.loading')}</p>}
               {localTree.error && <div className="p-4"><Message variant="error">{errorMessage(localTree.error, t('targets.browserError'))}</Message></div>}

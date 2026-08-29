@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"oscraper/internal/media"
 	"oscraper/internal/model"
 	"oscraper/internal/openlist"
 	"oscraper/pkg/cryptoutil"
@@ -18,6 +19,19 @@ import (
 
 type catalogBrowser struct {
 	levels map[string][]openlist.DirectoryEntry
+}
+
+type stubMediaRecognizer struct {
+	info  media.Info
+	calls int
+}
+
+func (s *stubMediaRecognizer) Recognize(_ context.Context, fileName, relativePath, libraryType string) (media.Info, bool, error) {
+	s.calls++
+	if fileName != "unknown.mkv" || relativePath != "Mystery Show/unknown.mkv" || libraryType != "tv" {
+		return media.Info{}, false, fmt.Errorf("unexpected AI input: %s %s %s", fileName, relativePath, libraryType)
+	}
+	return s.info, true, nil
 }
 
 func TestLocalMovieScanUsesMountedDirectory(t *testing.T) {
@@ -168,6 +182,24 @@ func TestTVScanUsesRecursiveRepresentativeEpisode(t *testing.T) {
 	loaded, err := service.Candidates(1, 0)
 	if err != nil || len(loaded) != 1 || loaded[0].ID == 0 {
 		t.Fatalf("candidate was not persisted: %#v, %v", loaded, err)
+	}
+}
+
+func TestLowConfidenceCandidateUsesAIRecognition(t *testing.T) {
+	service, _ := newCatalogTestService(t, "tv", map[string][]openlist.DirectoryEntry{
+		"/media/library":              {{Name: "Mystery Show", Path: "/media/library/Mystery Show", IsDir: true}},
+		"/media/library/Mystery Show": {{Name: "unknown.mkv", Path: "/media/library/Mystery Show/unknown.mkv", Size: 100}},
+	})
+	season, episode := 2, 7
+	recognizer := &stubMediaRecognizer{info: media.Info{Title: "Recognized Show", Season: &season, Episode: &episode, Confidence: 95}}
+	service.recognizer = recognizer
+	result, err := service.Scan(context.Background(), 1, 1, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	candidate := result.Candidates[0]
+	if recognizer.calls != 1 || candidate.ParsedTitle != "Recognized Show" || candidate.Status != "ready" || candidate.Episode == nil || *candidate.Episode != 7 {
+		t.Fatalf("AI recognition was not applied: %#v, calls=%d", candidate, recognizer.calls)
 	}
 }
 

@@ -130,11 +130,21 @@ type scrapingSettingsRequest struct {
 	PosterSize   string `json:"poster_size" binding:"required,max=20"`
 	BackdropSize string `json:"backdrop_size" binding:"required,max=20"`
 	Timeout      int    `json:"timeout_seconds" binding:"required,min=1,max=120"`
+	ProxyHost    string `json:"proxy_host" binding:"max=255"`
+	ProxyPort    int    `json:"proxy_port" binding:"min=0,max=65535"`
+	AIEnabled    bool   `json:"ai_enabled"`
+	AIBaseURL    string `json:"ai_base_url" binding:"max=500"`
+	AIAPIKey     string `json:"ai_api_key" binding:"max=500"`
+	AIModel      string `json:"ai_model" binding:"max=200"`
+	AIQPMLimit   int    `json:"ai_qpm_limit" binding:"min=0,max=1000"`
+	AITimeout    int    `json:"ai_timeout_seconds" binding:"min=0,max=120"`
 }
 
 func (r scrapingSettingsRequest) command() service.SaveScrapingSettingsCommand {
 	return service.SaveScrapingSettingsCommand{
 		APIKey: r.APIKey, BaseURL: r.BaseURL, ImageBaseURL: r.ImageBaseURL, Language: r.Language,
 		Region: r.Region, PosterSize: r.PosterSize, BackdropSize: r.BackdropSize, Timeout: r.Timeout,
+		ProxyHost: r.ProxyHost, ProxyPort: r.ProxyPort, AIEnabled: r.AIEnabled, AIBaseURL: r.AIBaseURL,
+		AIAPIKey: r.AIAPIKey, AIModel: r.AIModel, AIQPMLimit: r.AIQPMLimit, AITimeout: r.AITimeout,
 	}
 }
