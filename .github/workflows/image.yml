@@ -27,7 +27,7 @@ jobs:
       tag: ${{ steps.version.outputs.tag }}
       version: ${{ steps.version.outputs.version }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
           fetch-depth: 0
@@ -67,14 +67,14 @@ jobs:
     needs: classify
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ needs.classify.outputs.tag }}
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with:
           go-version-file: backend/go.mod
           cache-dependency-path: backend/go.sum
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: npm
@@ -99,15 +99,15 @@ jobs:
 
   verify-image:
     name: Container smoke test
-    needs: [classify, test]
+    needs: classify
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ needs.classify.outputs.tag }}
-      - uses: docker/setup-buildx-action@v3
+      - uses: docker/setup-buildx-action@v4
       - name: Build verification image
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           file: deploy/Dockerfile
@@ -116,7 +116,7 @@ jobs:
           push: false
           tags: oscraper:release-check
           cache-from: type=gha,scope=oscraper-linux-amd64
-          cache-to: type=gha,mode=max,scope=oscraper-linux-amd64
+          cache-to: type=gha,mode=min,scope=oscraper-linux-amd64,ignore-error=true
       - name: Verify container health
         shell: bash
         run: |
@@ -167,22 +167,33 @@ jobs:
           docker logs oscraper-release-check
           exit 1
 
-  publish:
-    name: Publish ${{ needs.classify.outputs.channel }} image
+  build-platform:
+    name: Build ${{ matrix.platform }} image
     needs: [classify, test, verify-image]
-    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux/amd64
+            runner: ubuntu-24.04
+            artifact: amd64
+          - platform: linux/arm64
+            runner: ubuntu-24.04-arm
+            artifact: arm64
+    runs-on: ${{ matrix.runner }}
     environment: ${{ needs.classify.outputs.environment }}
     permissions:
       contents: read
       packages: write
+    env:
+      IMAGE: ghcr.io/${{ github.repository_owner }}/oscraper
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ needs.classify.outputs.tag }}
-      - uses: docker/setup-qemu-action@v3
-      - uses: docker/setup-buildx-action@v3
+      - uses: docker/setup-buildx-action@v4
       - name: Log in to GHCR
-        uses: docker/login-action@v3
+        uses: docker/login-action@v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -190,7 +201,6 @@ jobs:
       - name: Protect immutable version tag
         shell: bash
         env:
-          IMAGE: ghcr.io/${{ github.repository_owner }}/oscraper
           VERSION: ${{ needs.classify.outputs.version }}
         run: |
           if docker buildx imagetools inspect "${IMAGE}:${VERSION}" >/dev/null 2>&1; then
@@ -198,10 +208,10 @@ jobs:
             exit 1
           fi
       - name: Generate image metadata
-        uses: docker/metadata-action@v5
+        uses: docker/metadata-action@v6
         id: meta
         with:
-          images: ghcr.io/${{ github.repository_owner }}/oscraper
+          images: ${{ env.IMAGE }}
           flavor: |
             latest=false
           tags: |
@@ -211,32 +221,135 @@ jobs:
             type=semver,pattern={{major}},value=${{ needs.classify.outputs.tag }},enable=${{ needs.classify.outputs.channel == 'production' }}
             type=raw,value=latest,enable=${{ needs.classify.outputs.channel == 'production' }}
             type=sha,prefix=sha-,format=long
-      - name: Build and publish multi-platform image
-        uses: docker/build-push-action@v6
+      - name: Build and push platform image by digest
+        uses: docker/build-push-action@v7
         id: build
         with:
           context: .
           file: deploy/Dockerfile
-          platforms: linux/amd64,linux/arm64
-          push: true
-          tags: ${{ steps.meta.outputs.tags }}
+          platforms: ${{ matrix.platform }}
+          outputs: type=image,name=${{ env.IMAGE }},push-by-digest=true,name-canonical=true,push=true
           labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha,scope=oscraper-multi-platform
-          cache-to: type=gha,mode=max,scope=oscraper-multi-platform
+          cache-from: type=gha,scope=oscraper-${{ matrix.artifact }}
+          cache-to: type=gha,mode=min,scope=oscraper-${{ matrix.artifact }},ignore-error=true
           provenance: mode=max
           sbom: true
-      - name: Verify published manifest
+      - name: Export platform digest
         shell: bash
         env:
-          IMAGE: ghcr.io/${{ github.repository_owner }}/oscraper
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          set -euo pipefail
+          if [[ ! "${DIGEST}" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+            echo "Invalid platform digest: ${DIGEST}" >&2
+            exit 1
+          fi
+          mkdir -p "${RUNNER_TEMP}/digests"
+          touch "${RUNNER_TEMP}/digests/${DIGEST#sha256:}"
+      - name: Upload platform digest
+        uses: actions/upload-artifact@v7
+        with:
+          name: digests-${{ matrix.artifact }}
+          path: ${{ runner.temp }}/digests/*
+          if-no-files-found: error
+          retention-days: 1
+
+  publish:
+    name: Publish ${{ needs.classify.outputs.channel }} manifest
+    needs: [classify, build-platform]
+    runs-on: ubuntu-24.04
+    environment: ${{ needs.classify.outputs.environment }}
+    permissions:
+      contents: read
+      packages: write
+    env:
+      IMAGE: ghcr.io/${{ github.repository_owner }}/oscraper
+    steps:
+      - uses: docker/setup-buildx-action@v4
+      - name: Log in to GHCR
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Protect immutable version tag
+        shell: bash
+        env:
           VERSION: ${{ needs.classify.outputs.version }}
-        run: docker buildx imagetools inspect "${IMAGE}:${VERSION}"
+        run: |
+          if docker buildx imagetools inspect "${IMAGE}:${VERSION}" >/dev/null 2>&1; then
+            echo "Image ${IMAGE}:${VERSION} already exists and will not be overwritten" >&2
+            exit 1
+          fi
+      - name: Download platform digests
+        uses: actions/download-artifact@v8
+        with:
+          pattern: digests-*
+          path: ${{ runner.temp }}/digests
+          merge-multiple: true
+      - name: Generate image metadata
+        uses: docker/metadata-action@v6
+        id: meta
+        with:
+          images: ${{ env.IMAGE }}
+          flavor: |
+            latest=false
+          tags: |
+            type=raw,value=${{ needs.classify.outputs.version }}
+            type=raw,value=beta,enable=${{ needs.classify.outputs.channel == 'beta' }}
+            type=semver,pattern={{major}}.{{minor}},value=${{ needs.classify.outputs.tag }},enable=${{ needs.classify.outputs.channel == 'production' }}
+            type=semver,pattern={{major}},value=${{ needs.classify.outputs.tag }},enable=${{ needs.classify.outputs.channel == 'production' }}
+            type=raw,value=latest,enable=${{ needs.classify.outputs.channel == 'production' }}
+            type=sha,prefix=sha-,format=long
+      - name: Create multi-platform manifest
+        shell: bash
+        env:
+          TAGS: ${{ steps.meta.outputs.tags }}
+        run: |
+          set -euo pipefail
+          tag_args=()
+          while IFS= read -r tag; do
+            if [[ -n "${tag}" ]]; then
+              tag_args+=(--tag "${tag}")
+            fi
+          done <<< "${TAGS}"
+
+          digest_args=()
+          for digest_file in "${RUNNER_TEMP}"/digests/*; do
+            if [[ ! -f "${digest_file}" || ! "$(basename "${digest_file}")" =~ ^[0-9a-f]{64}$ ]]; then
+              echo "Invalid digest artifact: ${digest_file}" >&2
+              exit 1
+            fi
+            digest_args+=("${IMAGE}@sha256:$(basename "${digest_file}")")
+          done
+          if [[ "${#digest_args[@]}" -ne 2 ]]; then
+            echo "Expected two platform digests, found ${#digest_args[@]}" >&2
+            exit 1
+          fi
+
+          docker buildx imagetools create "${tag_args[@]}" "${digest_args[@]}"
+      - name: Verify published manifest
+        id: manifest
+        shell: bash
+        env:
+          VERSION: ${{ needs.classify.outputs.version }}
+        run: |
+          set -euo pipefail
+          manifest="$(docker buildx imagetools inspect "${IMAGE}:${VERSION}")"
+          echo "${manifest}"
+          grep -Eq 'Platform:[[:space:]]+linux/amd64' <<< "${manifest}"
+          grep -Eq 'Platform:[[:space:]]+linux/arm64' <<< "${manifest}"
+          digest="$(awk '$1 == "Digest:" { print $2; exit }' <<< "${manifest}")"
+          if [[ ! "${digest}" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+            echo "Invalid published manifest digest: ${digest}" >&2
+            exit 1
+          fi
+          echo "digest=${digest}" >> "${GITHUB_OUTPUT}"
       - name: Write release summary
         shell: bash
         env:
           CHANNEL: ${{ needs.classify.outputs.channel }}
-          DIGEST: ${{ steps.build.outputs.digest }}
-          IMAGE: ghcr.io/${{ github.repository_owner }}/oscraper
+          DIGEST: ${{ steps.manifest.outputs.digest }}
           VERSION: ${{ needs.classify.outputs.version }}
         run: |
           {

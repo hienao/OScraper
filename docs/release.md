@@ -42,7 +42,7 @@ git tag v1.2.0-beta.1
 git push origin v1.2.0-beta.1
 ```
 
-工作流依次执行版本校验、后端竞态测试、静态检查、前端测试/构建、Compose 校验、单架构容器健康烟测，然后自动构建并推送 AMD64/ARM64 镜像。
+版本校验后，代码测试与单架构容器健康烟测并行执行。两者通过后，AMD64 与 ARM64 镜像分别在 GitHub 托管的原生架构 Runner 上并行构建，最终合并并核验多架构 Manifest。平台构建使用轻量缓存；缓存导出失败不会阻断已经完成的镜像构建。
 
 ```bash
 docker pull ghcr.io/<repository-owner>/oscraper:1.2.0-beta.1
