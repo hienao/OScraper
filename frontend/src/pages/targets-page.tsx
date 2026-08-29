@@ -16,6 +16,7 @@ import { FormField } from '@/components/common/form-field'
 import { Message } from '@/components/common/message'
 import { Panel } from '@/components/common/panel'
 import { errorMessage } from '@/lib/error-message'
+import { createIdempotencyKey } from '@/lib/idempotency-key'
 
 const emptyForm: TargetInput = { source_type: 'openlist', connection_id: 0, name: '', root_path: '/', library_type: 'movie', rename_enabled: false, enabled: true }
 
@@ -95,7 +96,7 @@ export function TargetsPage() {
     onError: (error) => setMatchError(errorMessage(error, t('targets.previewError'))),
   })
   const executeJob = useMutation({
-    mutationFn: (value: ScrapePreview) => jobApi.submit(value.target_id, { preview_id: value.id, rename_media: value.plan.proposed_directory_creates.length + value.plan.proposed_directory_renames.length + value.plan.proposed_file_renames.length > 0, confirm_directory_fingerprint: value.fingerprint }, crypto.randomUUID()),
+    mutationFn: (value: ScrapePreview) => jobApi.submit(value.target_id, { preview_id: value.id, rename_media: value.plan.proposed_directory_creates.length + value.plan.proposed_directory_renames.length + value.plan.proposed_file_renames.length > 0, confirm_directory_fingerprint: value.fingerprint }, createIdempotencyKey()),
     onSuccess: () => { setMatchCandidate(null); void navigate('/jobs') },
     onError: (error) => setMatchError(errorMessage(error, t('targets.executeError'))),
   })
