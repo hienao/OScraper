@@ -540,12 +540,15 @@ flowchart LR
 | `JWT_SECRET` | 无生产默认值 | 至少 32 位 |
 | `CREDENTIAL_ENCRYPTION_KEY` | 无 | 32-byte key 的 base64 表示 |
 | `TZ` | `UTC` | 应用时区 |
+| `PUID` | `1000` | 容器内应用运行用户 ID，必须大于 0 |
+| `PGID` | `1000` | 容器内应用运行组 ID，必须大于 0 |
+| `UMASK` | `002` | 应用新建文件和目录的权限掩码 |
 | `SCRAPE_WORKERS` | `2` | 1–4 |
 | `SCRAPE_QUEUE_SIZE` | `100` | 有界作业队列 |
 | `API_LOG_QUEUE_SIZE` | `5000` | 日志队列 |
 | `API_LOG_BATCH_SIZE` | `100` | 日志批次 |
 
-外部 Web 端口建议使用 `3113`，避免与 Seshat 默认的 `3112` 冲突；Go API 固定监听容器内 `8080`。
+外部 Web 端口建议使用 `3113`，避免与 Seshat 默认的 `3112` 冲突；Go API 固定监听容器内 `8080`。入口进程以 root 完成用户映射及 `/data`、`/cache` 初始化后，Nginx 和 Go 服务均以 `PUID:PGID` 运行；入口进程不修改 `/media` 的所有权。
 
 ### 15.3 容器退出
 

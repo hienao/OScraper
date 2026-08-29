@@ -70,6 +70,9 @@ services:
       JWT_SECRET: ${JWT_SECRET:?JWT_SECRET is required}
       CREDENTIAL_ENCRYPTION_KEY: ${CREDENTIAL_ENCRYPTION_KEY:?CREDENTIAL_ENCRYPTION_KEY is required}
       TZ: ${TZ:-UTC}
+      PUID: ${PUID:-1000}
+      PGID: ${PGID:-1000}
+      UMASK: "${UMASK:-002}"
       SCRAPE_WORKERS: ${SCRAPE_WORKERS:-2}
       SCAN_WORKERS: ${SCAN_WORKERS:-1}
     volumes:
@@ -100,6 +103,11 @@ JWT_SECRET=replace-with-the-first-generated-value
 CREDENTIAL_ENCRYPTION_KEY=replace-with-the-second-generated-value
 TZ=Asia/Shanghai
 
+# Match the owner of HOST_MEDIA_DIR on Linux/NAS systems.
+PUID=1000
+PGID=1000
+UMASK=002
+
 # Host directory exposed to local scrape targets as /media.
 HOST_MEDIA_DIR=./media
 
@@ -109,6 +117,8 @@ SCAN_WORKERS=1
 ```
 
 Keep `CREDENTIAL_ENCRYPTION_KEY` safe and unchanged. Existing OpenList tokens and TMDB keys cannot be decrypted if this key is lost or replaced.
+
+On Linux and NAS systems, run `id YOUR_USERNAME` on the host and copy its UID and primary GID into `PUID` and `PGID`. The startup process initializes `/data` and `/cache`, then runs Nginx and OScraper as that non-root identity. It never changes `/media` ownership. `UMASK=002` allows owner/group writes; use `022` when group writes are not wanted.
 
 If the GHCR package is private, authenticate before pulling it:
 
@@ -156,7 +166,7 @@ For a first real run, use a small, recoverable copy of your library rather than 
 | `/cache` | API and application logs plus temporary cache | Recommended; stored in `oscraper-cache` |
 | `/media` | Host media exposed to local scrape targets | Required only for local targets |
 
-The container runs as a non-root user. The directory configured by `HOST_MEDIA_DIR` must be readable for scans and writable for renaming or metadata generation. Symbolic links inside local targets are intentionally ignored or rejected.
+The container starts with the minimum root privileges needed to initialize `/data` and `/cache`, then runs Nginx and OScraper as the configured non-root `PUID:PGID`. The directory configured by `HOST_MEDIA_DIR` must already be readable by that identity for scans and writable for renaming or metadata generation. OScraper never changes media-library ownership. Symbolic links inside local targets are intentionally ignored or rejected.
 
 OScraper supports a single application instance. Do not attach the same `/data` volume to multiple running containers because the application uses SQLite and local job checkpoints.
 
@@ -183,7 +193,7 @@ docker compose logs --tail=200 oscraper
 Common checks:
 
 - **The container does not start** — verify that `JWT_SECRET` has at least 32 characters and that `CREDENTIAL_ENCRYPTION_KEY` is a raw 32-byte value or a Base64-encoded 32-byte value.
-- **Local media is unavailable** — verify `HOST_MEDIA_DIR`, Docker file sharing, and host read/write permissions.
+- **Local media is unavailable** — run `id YOUR_USERNAME`, set matching `PUID`/`PGID`, and verify `HOST_MEDIA_DIR` and Docker file sharing.
 - **OpenList testing fails** — verify the server URL, token, account-root path, and required permissions.
 - **TMDB testing fails** — verify the API key, metadata region/language, proxy, and outbound network access.
 - **A preview becomes stale** — the source directory changed after scanning; scan it again and create a new preview.
