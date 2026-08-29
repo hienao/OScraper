@@ -107,6 +107,29 @@ func TestBrowseRejectsPathOutsideTargetRoot(t *testing.T) {
 	}
 }
 
+func TestBrowseConnectionStartsAtAccountRootAndRejectsEscape(t *testing.T) {
+	targetService, db := newTargetTestService(t)
+	if err := db.Model(&model.OpenListConnection{}).Where("id = ?", 1).Update("base_path", "/media/").Error; err != nil {
+		t.Fatal(err)
+	}
+	level, err := targetService.BrowseConnection(context.Background(), 1, "", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if level.RootPath != "/media" || level.Path != "/media" || len(level.Entries) != 1 || level.Entries[0].Name != "Movies" {
+		t.Fatalf("unexpected connection directory level: %#v", level)
+	}
+
+	_, err = targetService.BrowseConnection(context.Background(), 1, "/outside", false)
+	if err == nil {
+		t.Fatal("expected path outside account root to fail")
+	}
+	serviceError, ok := err.(*Error)
+	if !ok || serviceError.Code != "target.path_outside_account" {
+		t.Fatalf("unexpected error: %#v", err)
+	}
+}
+
 func TestDeleteTargetRemovesScanCatalogAtomically(t *testing.T) {
 	targetService, db := newTargetTestService(t)
 	target, err := targetService.Create(context.Background(), 1, SaveTargetCommand{ConnectionID: 1, Name: "Movies", RootPath: "/media/Movies", LibraryType: "movie", Enabled: true})

@@ -29,6 +29,7 @@ type LocalStorageStatus struct {
 	TotalBytes uint64 `json:"total_bytes"`
 	UID        int    `json:"uid"`
 	GID        int    `json:"gid"`
+	Groups     []int  `json:"groups"`
 }
 
 type localStorage struct{ root string }
@@ -46,7 +47,11 @@ func newLocalStorage(root string) *localStorage {
 }
 
 func (s *localStorage) Status() LocalStorageStatus {
-	status := LocalStorageStatus{Root: s.root, UID: os.Geteuid(), GID: os.Getegid()}
+	groups, _ := os.Getgroups()
+	if groups == nil {
+		groups = []int{}
+	}
+	status := LocalStorageStatus{Root: s.root, UID: os.Geteuid(), GID: os.Getegid(), Groups: groups}
 	info, err := os.Lstat(filepath.FromSlash(s.root))
 	if err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
 		return status

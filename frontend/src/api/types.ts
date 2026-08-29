@@ -93,6 +93,7 @@ export interface LocalStorageStatus {
   total_bytes: number
   uid: number
   gid: number
+  groups: number[]
 }
 
 export interface DirectoryNode {
@@ -153,6 +154,15 @@ export interface ScrapingSettings {
   poster_size: string
   backdrop_size: string
   timeout_seconds: number
+  proxy_host: string
+  proxy_port: number
+  ai_enabled: boolean
+  ai_has_api_key: boolean
+  ai_api_key_mask?: string
+  ai_base_url: string
+  ai_model: string
+  ai_qpm_limit: number
+  ai_timeout_seconds: number
 }
 
 export interface ScrapingSettingsInput {
@@ -164,6 +174,14 @@ export interface ScrapingSettingsInput {
   poster_size: string
   backdrop_size: string
   timeout_seconds: number
+  proxy_host: string
+  proxy_port: number
+  ai_enabled: boolean
+  ai_api_key: string
+  ai_base_url: string
+  ai_model: string
+  ai_qpm_limit: number
+  ai_timeout_seconds: number
 }
 
 export interface TMDBSearchResult {

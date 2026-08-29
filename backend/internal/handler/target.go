@@ -95,6 +95,19 @@ func (h *TargetHandler) Browse(c *gin.Context) {
 	response.Success(c, level)
 }
 
+func (h *TargetHandler) BrowseConnection(c *gin.Context) {
+	id, ok := connectionID(c)
+	if !ok {
+		return
+	}
+	level, err := h.service.BrowseConnection(c.Request.Context(), id, c.Query("path"), c.Query("refresh") == "true")
+	if err != nil {
+		respondError(c, err)
+		return
+	}
+	response.Success(c, level)
+}
+
 func (h *TargetHandler) LocalStatus(c *gin.Context) {
 	response.Success(c, h.service.LocalStatus())
 }

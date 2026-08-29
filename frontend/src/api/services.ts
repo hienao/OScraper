@@ -10,6 +10,12 @@ export const authApi = {
 
 export const connectionApi = {
   list: () => apiRequest<OpenListConnection[]>('/api/openlist-connections'),
+  tree: (id: number, path?: string, refresh = false) => {
+    const query = new URLSearchParams()
+    if (path) query.set('path', path)
+    if (refresh) query.set('refresh', 'true')
+    return apiRequest<DirectoryLevel>(`/api/openlist-connections/${id}/tree?${query.toString()}`)
+  },
   create: (body: CreateConnectionInput) => apiRequest<OpenListConnection>('/api/openlist-connections', { method: 'POST', body }),
   update: (id: number, body: UpdateConnectionInput) => apiRequest<OpenListConnection>(`/api/openlist-connections/${id}`, { method: 'PUT', body }),
   remove: (id: number) => apiRequest<void>(`/api/openlist-connections/${id}`, { method: 'DELETE' }),
@@ -42,6 +48,7 @@ export const settingsApi = {
   scraping: () => apiRequest<ScrapingSettings>('/api/settings/scraping'),
   saveScraping: (body: ScrapingSettingsInput) => apiRequest<ScrapingSettings>('/api/settings/scraping', { method: 'PUT', body }),
   testTMDB: () => apiRequest<{ ok: boolean }>('/api/settings/scraping/test-tmdb', { method: 'POST' }),
+  testAI: () => apiRequest<{ ok: boolean }>('/api/settings/scraping/test-ai', { method: 'POST' }),
 }
 
 export const previewApi = {

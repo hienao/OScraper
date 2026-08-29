@@ -211,6 +211,44 @@ func (s *TargetService) Browse(ctx context.Context, id uint, requestedPath strin
 	return &DirectoryLevel{TargetID: target.ID, RootPath: target.RootPath, Path: normalized, Entries: nodes}, nil
 }
 
+func (s *TargetService) BrowseConnection(ctx context.Context, id uint, requestedPath string, refresh bool) (*DirectoryLevel, error) {
+	connection, err := s.connections.Find(id)
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, NotFound("connection.not_found", "OpenList connection not found")
+	}
+	if err != nil {
+		return nil, Internal("target.connection_failed", "Failed to load OpenList connection", err)
+	}
+	if !connection.Enabled {
+		return nil, Conflict("target.connection_disabled", "OpenList connection is disabled")
+	}
+	accountRoot, rootErr := openlist.NormalizeRemotePath(connection.BasePath)
+	if rootErr != nil {
+		return nil, Internal("target.connection_failed", "OpenList connection has an invalid account root", rootErr)
+	}
+	requestedPath = strings.TrimSpace(requestedPath)
+	if requestedPath == "" {
+		requestedPath = accountRoot
+	}
+	normalized, normalizeErr := openlist.NormalizeRemotePath(requestedPath)
+	if normalizeErr != nil || !openlist.IsWithinPath(accountRoot, normalized) {
+		return nil, Forbidden("target.path_outside_account", "Requested path is outside the OpenList account root")
+	}
+	token, err := s.cipher.Decrypt(connection.EncryptedToken)
+	if err != nil {
+		return nil, Internal("connection.decryption_failed", "Stored OpenList token cannot be decrypted", err)
+	}
+	entries, err := s.client.ListDirectory(ctx, connection.BaseURL, token, normalized, refresh)
+	if err != nil {
+		return nil, mapOpenListError(err)
+	}
+	nodes := make([]DirectoryNode, 0, len(entries))
+	for _, entry := range entries {
+		nodes = append(nodes, DirectoryNode{Name: entry.Name, Path: entry.Path, IsDir: entry.IsDir, Size: entry.Size, Modified: entry.Modified})
+	}
+	return &DirectoryLevel{RootPath: accountRoot, Path: normalized, Entries: nodes}, nil
+}
+
 func (s *TargetService) validate(ctx context.Context, request SaveTargetCommand, excludeID uint) (string, *uint, string, string, error) {
 	libraryType := strings.ToLower(strings.TrimSpace(request.LibraryType))
 	if libraryType != "movie" && libraryType != "tv" && libraryType != "anime" {

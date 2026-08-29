@@ -2,6 +2,8 @@ package tmdb
 
 import (
 	"context"
+	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -73,5 +75,27 @@ func TestImageBaseAcceptsExistingTMDBPath(t *testing.T) {
 	url := imageURL(Config{ImageBaseURL: "https://image.tmdb.org/t/p", PosterSize: "w500"}, "/poster.jpg", "w500")
 	if url != "https://image.tmdb.org/t/p/w500/poster.jpg" {
 		t.Fatalf("unexpected image URL: %s", url)
+	}
+}
+
+func TestTMDBRequestUsesConfiguredHTTPProxy(t *testing.T) {
+	proxied := false
+	proxy := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		proxied = true
+		if request.URL.Host != "tmdb.invalid" || request.URL.Path != "/3/configuration" {
+			t.Fatalf("unexpected proxy request: %s", request.URL.String())
+		}
+		_, _ = io.WriteString(writer, `{}`)
+	}))
+	defer proxy.Close()
+	proxyURL := proxy.Listener.Addr().(*net.TCPAddr)
+	err := NewClient().Test(context.Background(), Config{
+		APIKey: "secret", BaseURL: "http://tmdb.invalid", ProxyHost: proxyURL.IP.String(), ProxyPort: proxyURL.Port, Timeout: time.Second,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !proxied {
+		t.Fatal("TMDB request did not use the configured proxy")
 	}
 }

@@ -9,6 +9,7 @@ import (
 	"oscraper/internal/logging"
 	"oscraper/internal/maintenance"
 	"oscraper/internal/openlist"
+	"oscraper/internal/provider/ai"
 	"oscraper/internal/provider/tmdb"
 	"oscraper/internal/router"
 	"oscraper/internal/service"
@@ -51,15 +52,17 @@ func New(cfg *config.Config, db *gorm.DB, logs *logging.Manager, cipher *cryptou
 	}
 	connectionService := service.NewConnectionService(db, cipher, openListClient)
 	targetService := service.NewTargetService(db, cipher, openListClient, cfg.LocalMediaRoot)
-	catalogService := service.NewCatalogServiceWithRuntime(db, cipher, openListClient, quota, cfg.LocalMediaRoot, cfg.ScanWorkers, cfg.ScanQueueSize)
+	tmdbClient := tmdb.NewClient()
+	aiClient := ai.NewClient()
+	settingService := service.NewSettingService(db, cipher, tmdbClient, aiClient)
+	recognitionService := service.NewAIRecognitionService(settingService, aiClient)
+	catalogService := service.NewCatalogServiceWithRuntime(db, cipher, openListClient, quota, cfg.LocalMediaRoot, cfg.ScanWorkers, cfg.ScanQueueSize, recognitionService)
 	if err := catalogService.Start(); err != nil {
 		cancel()
 		return nil, err
 	}
-	tmdbClient := tmdb.NewClient()
-	settingService := service.NewSettingService(db, cipher, tmdbClient)
 	previewService := service.NewPreviewService(db, settingService, tmdbClient, catalogService)
-	jobService, err := service.NewJobService(db, cfg, cipher, openListClient, catalogService, quota)
+	jobService, err := service.NewJobService(db, cfg, cipher, openListClient, catalogService, quota, settingService)
 	if err != nil {
 		cancel()
 		_ = catalogService.Shutdown(context.Background())

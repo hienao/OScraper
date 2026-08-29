@@ -33,6 +33,8 @@ func TestAuthenticatedConnectionTargetAndScanFlow(t *testing.T) {
 				t.Fatal(err)
 			}
 			switch input.Path {
+			case "/media":
+				_, _ = writer.Write([]byte(`{"code":200,"data":{"content":[{"name":"Movies","is_dir":true}]}}`))
 			case "/media/Movies":
 				_, _ = writer.Write([]byte(`{"code":200,"data":{"content":[{"name":"Arrival (2016)","is_dir":true}]}}`))
 			case "/media/Movies/Arrival (2016)":
@@ -103,6 +105,11 @@ func TestAuthenticatedConnectionTargetAndScanFlow(t *testing.T) {
 		"name": "Home", "base_url": openList.URL, "token": "openlist-token", "qps_limit": 5, "qpm_limit": 120,
 	}, http.StatusCreated)
 	connectionID := responseID(t, connection)
+	connectionTree := requestJSON(t, server.URL, http.MethodGet, fmt.Sprintf("/api/openlist-connections/%d/tree", connectionID), token, nil, http.StatusOK)
+	connectionTreeData := responseData(t, connectionTree)
+	if connectionTreeData["root_path"] != "/media" || connectionTreeData["path"] != "/media" || len(connectionTreeData["entries"].([]any)) != 1 {
+		t.Fatalf("unexpected connection tree response: %s", connectionTree)
+	}
 	target := requestJSON(t, server.URL, http.MethodPost, "/api/scrape-targets", token, map[string]any{
 		"connection_id": connectionID, "name": "Movies", "root_path": "/media/Movies", "library_type": "movie", "rename_enabled": true, "enabled": true,
 	}, http.StatusCreated)

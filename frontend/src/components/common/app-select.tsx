@@ -33,7 +33,9 @@ export function AppSelect({
   return (
     <Select value={value} onValueChange={(next) => onValueChange(String(next))} alignItemWithTrigger={false}>
       <SelectTrigger className={`w-full ${className}`} aria-label={ariaLabel} startSlot={startSlot}>
-        <SelectValue placeholder={placeholder} />
+        <SelectValue placeholder={placeholder}>
+          {(selected) => options.find((option) => option.value === String(selected))?.label ?? placeholder ?? String(selected ?? '')}
+        </SelectValue>
       </SelectTrigger>
       <SelectContent>
         {options.map((option) => <SelectItem key={option.value} value={option.value} disabled={option.disabled}>{option.label}</SelectItem>)}

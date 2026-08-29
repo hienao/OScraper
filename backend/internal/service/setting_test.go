@@ -4,8 +4,10 @@ import (
 	"context"
 	"fmt"
 	"testing"
+	"time"
 
 	"oscraper/internal/model"
+	"oscraper/internal/provider/ai"
 	"oscraper/internal/provider/tmdb"
 	"oscraper/pkg/cryptoutil"
 
@@ -16,6 +18,10 @@ import (
 type stubTMDBTester struct{ err error }
 
 func (s stubTMDBTester) Test(context.Context, tmdb.Config) error { return s.err }
+
+type stubAITester struct{ err error }
+
+func (s stubAITester) Test(context.Context, ai.Config) error { return s.err }
 
 func newSettingTestService(t *testing.T) (*SettingService, *gorm.DB) {
 	t.Helper()
@@ -73,5 +79,33 @@ func TestSaveScrapingRejectsInvalidLanguage(t *testing.T) {
 	})
 	if err == nil {
 		t.Fatal("expected invalid language to fail")
+	}
+}
+
+func TestSaveScrapingEncryptsAIKeyAndPersistsProxy(t *testing.T) {
+	settings, db := newSettingTestService(t)
+	settings.ai = stubAITester{}
+	response, err := settings.SaveScraping(1, SaveScrapingSettingsCommand{
+		APIKey: "tmdb-secret", BaseURL: "https://api.tmdb.org", ImageBaseURL: "https://image.tmdb.org",
+		Language: "zh-CN", PosterSize: "w500", BackdropSize: "w1280", Timeout: 20,
+		ProxyHost: "proxy.local", ProxyPort: 7890, AIEnabled: true, AIAPIKey: "ai-secret",
+		AIBaseURL: "https://api.openai.com/v1", AIModel: "gpt-4o-mini", AIQPMLimit: 45, AITimeout: 25,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !response.AIHasAPIKey || response.AIAPIKeyMask == "ai-secret" || response.ProxyHost != "proxy.local" || response.ProxyPort != 7890 {
+		t.Fatalf("unexpected settings response: %#v", response)
+	}
+	var stored model.SystemSetting
+	if err := db.First(&stored, "key = ?", settingAIAPIKey).Error; err != nil {
+		t.Fatal(err)
+	}
+	if stored.Value == "ai-secret" || !stored.IsSecret {
+		t.Fatalf("AI API key was not encrypted: %#v", stored)
+	}
+	config, hasKey, err := settings.AIConfig()
+	if err != nil || !hasKey || config.APIKey != "ai-secret" || config.QPMLimit != 45 || config.Timeout != 25*time.Second {
+		t.Fatalf("unexpected stored AI config: %#v %t %v", config, hasKey, err)
 	}
 }

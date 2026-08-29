@@ -20,6 +20,7 @@ import (
 	"oscraper/internal/logging"
 	"oscraper/internal/model"
 	"oscraper/internal/openlist"
+	"oscraper/internal/provider/tmdb"
 	"oscraper/internal/repository"
 	"oscraper/pkg/cryptoutil"
 
@@ -80,6 +81,7 @@ type JobExecutor struct {
 	maxImage    int64
 	locks       sync.Map
 	imageClient *http.Client
+	settings    *SettingService
 	local       *localStorage
 }
 
@@ -89,7 +91,7 @@ type jobSource struct {
 	local      *localStorage
 }
 
-func NewJobService(db *gorm.DB, cfg *config.Config, cipher *cryptoutil.Cipher, client OpenListMutator, catalog CandidateInspector, quota *ConnectionQuota) (*JobService, error) {
+func NewJobService(db *gorm.DB, cfg *config.Config, cipher *cryptoutil.Cipher, client OpenListMutator, catalog CandidateInspector, quota *ConnectionQuota, settings ...*SettingService) (*JobService, error) {
 	workers, queueSize, maxImage := cfg.ScrapeWorkers, cfg.ScrapeQueueSize, cfg.MaxImageBytes
 	if workers <= 0 {
 		workers = 2
@@ -120,6 +122,9 @@ func NewJobService(db *gorm.DB, cfg *config.Config, cipher *cryptoutil.Cipher, c
 	executor := &JobExecutor{
 		jobs: jobs, previews: previews, targets: targets, connections: repository.NewConnectionRepository(db), catalog: catalog,
 		audit: audit, cipher: cipher, client: client, quota: quota, workDir: workDir, maxImage: maxImage, local: local,
+	}
+	if len(settings) > 0 {
+		executor.settings = settings[0]
 	}
 	executor.imageClient = &http.Client{
 		Timeout: time.Duration(cfg.HTTPTimeoutSeconds) * time.Second,
@@ -611,7 +616,19 @@ func (s *JobExecutor) downloadImage(ctx context.Context, rawURL, destination str
 		return "", Internal("job.image_download_failed", "Failed to create image request", err)
 	}
 	request.Header.Set("Accept", "image/jpeg,image/png,image/webp")
-	response, err := s.imageClient.Do(request)
+	imageClient := s.imageClient
+	if s.settings != nil {
+		config, _, configErr := s.settings.TMDBConfig()
+		if configErr != nil {
+			return "", configErr
+		}
+		imageClient, configErr = tmdb.HTTPClient(config, s.imageClient.Timeout)
+		if configErr != nil {
+			return "", mapTMDBError(configErr)
+		}
+		imageClient.CheckRedirect = s.imageClient.CheckRedirect
+	}
+	response, err := imageClient.Do(request)
 	if err != nil {
 		return "", Internal("job.image_download_failed", "Failed to download TMDB image", err)
 	}
