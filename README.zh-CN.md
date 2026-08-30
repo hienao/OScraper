@@ -215,3 +215,9 @@ docker compose logs --tail=200 oscraper
 - [运维与恢复](docs/operations.md)
 - [发布渠道和镜像标签](docs/release.md)
 - [架构与设计](docs/design.md)
+
+## 许可证
+
+版权所有 © 2026 hienao。
+
+OScraper 的原创源代码和文档采用 [知识共享 署名—禁止演绎 4.0 国际许可证](LICENSE)（`CC-BY-ND-4.0`）。在保留署名的前提下，允许复制和重新分发未经修改的原始内容，包括商业用途；禁止分发经过修改、改编或二次开发的版本。第三方组件仍遵循各自的许可证。

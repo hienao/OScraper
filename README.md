@@ -218,3 +218,9 @@ For backup, recovery, permissions, gray release, and failure handling, see the [
 - [Operations and recovery](docs/operations.md)
 - [Release channels and image tags](docs/release.md)
 - [Architecture and design](docs/design.md)
+
+## License
+
+Copyright © 2026 hienao.
+
+OScraper's original source code and documentation are licensed under the [Creative Commons Attribution-NoDerivatives 4.0 International License](LICENSE) (`CC-BY-ND-4.0`). You may copy and redistribute unmodified material with attribution, including for commercial purposes. You may not distribute modified, adapted, or derivative versions. Third-party components remain subject to their respective licenses.
