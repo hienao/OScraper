@@ -225,6 +225,33 @@ func TestFailedUploadRetriesFromOperationCheckpoint(t *testing.T) {
 	}
 }
 
+func TestExistingMetadataSkipsUpload(t *testing.T) {
+	finalRoot := "/movies/Arrival (2016) {tmdbid-329865}"
+	finalNFO := finalRoot + "/Arrival (2016) {tmdbid-329865}.nfo"
+	remote := &memoryOpenList{entries: map[string]bool{
+		"/movies/Arrival.mkv": false,
+		finalRoot:             true,
+		finalNFO:              false,
+	}}
+	service, _, preview := newJobTestService(t, remote)
+	job, err := service.Submit(1, 1, SubmitJobCommand{PreviewID: preview.ID, RenameMedia: true, ConfirmDirectoryFingerprint: preview.Fingerprint}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	job = waitJob(t, service, job.ID)
+	if job.Status != "succeeded" || remote.uploadCalls != 0 {
+		t.Fatalf("existing metadata was uploaded: job=%#v uploads=%d", job, remote.uploadCalls)
+	}
+	operations, err := service.Operations(job.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	last := operations[len(operations)-1]
+	if last.Type != "upload" || last.Status != "skipped" || last.LastError != "" {
+		t.Fatalf("existing metadata operation was not cleanly skipped: %#v", last)
+	}
+}
+
 func TestLocalJobRenamesMediaAndWritesMetadata(t *testing.T) {
 	root := t.TempDir()
 	library := filepath.Join(root, "movies")
@@ -291,6 +318,7 @@ func TestLocalJobRenamesMediaAndWritesMetadata(t *testing.T) {
 }
 
 func TestDownloadImageStreamsOnlySupportedBoundedContent(t *testing.T) {
+	retryRequests := 0
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		switch request.URL.Path {
 		case "/valid":
@@ -302,6 +330,14 @@ func TestDownloadImageStreamsOnlySupportedBoundedContent(t *testing.T) {
 		case "/large":
 			writer.Header().Set("Content-Type", "image/jpeg")
 			_, _ = writer.Write([]byte("too-large"))
+		case "/retry":
+			retryRequests++
+			if retryRequests < imageDownloadAttempts {
+				http.Error(writer, "temporary", http.StatusServiceUnavailable)
+				return
+			}
+			writer.Header().Set("Content-Type", "image/webp")
+			_, _ = writer.Write([]byte("webp"))
 		}
 	}))
 	defer server.Close()
@@ -315,12 +351,65 @@ func TestDownloadImageStreamsOnlySupportedBoundedContent(t *testing.T) {
 	if content, err := os.ReadFile(destination); err != nil || string(content) != "png!" {
 		t.Fatalf("unexpected downloaded content %q: %v", content, err)
 	}
+	retryDestination := filepath.Join(t.TempDir(), "retry.webp")
+	contentType, err = executor.downloadImage(context.Background(), server.URL+"/retry", retryDestination)
+	if err != nil || contentType != "image/webp" || retryRequests != imageDownloadAttempts {
+		t.Fatalf("transient image failure was not retried: type=%q requests=%d err=%v", contentType, retryRequests, err)
+	}
 	for _, test := range []struct{ route, code string }{{"/invalid", "job.invalid_image_type"}, {"/large", "job.image_too_large"}} {
 		_, err := executor.downloadImage(context.Background(), server.URL+test.route, destination+strings.ReplaceAll(test.route, "/", "-"))
 		var serviceError *Error
 		if !errors.As(err, &serviceError) || serviceError.Code != test.code {
 			t.Fatalf("%s returned %v, want %s", test.route, err, test.code)
 		}
+	}
+}
+
+func TestImageDownloadFailureIsSkippedAfterRetries(t *testing.T) {
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		requests++
+		http.Error(writer, "temporary", http.StatusServiceUnavailable)
+	}))
+	defer server.Close()
+
+	remote := &memoryOpenList{entries: map[string]bool{"/movies/Arrival.mkv": false}}
+	service, db, preview := newJobTestService(t, remote)
+	service.executor.imageClient = server.Client()
+	var plan PreviewPlan
+	if err := json.Unmarshal([]byte(preview.PlanJSON), &plan); err != nil {
+		t.Fatal(err)
+	}
+	imagePath := "/movies/Arrival (2016) {tmdbid-329865}/Arrival (2016) {tmdbid-329865}-poster.jpg"
+	plan.Artifacts = append(plan.Artifacts, PreviewArtifact{Path: imagePath, Kind: "poster", SourceURL: server.URL + "/poster"})
+	plan.GeneratedFiles = append(plan.GeneratedFiles, imagePath)
+	encoded, _ := json.Marshal(plan)
+	preview.PlanJSON = string(encoded)
+	if err := db.Save(preview).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	job, err := service.Submit(1, 1, SubmitJobCommand{PreviewID: preview.ID, RenameMedia: true, ConfirmDirectoryFingerprint: preview.Fingerprint}, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	job = waitJob(t, service, job.ID)
+	if job.Status != "succeeded" || requests != imageDownloadAttempts {
+		t.Fatalf("image failure did not degrade gracefully: job=%#v requests=%d", job, requests)
+	}
+	operations, err := service.Operations(job.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	imageOperation := operations[len(operations)-1]
+	if imageOperation.ArtifactKind != "poster" || imageOperation.Status != "skipped" || imageOperation.LastError == "" {
+		t.Fatalf("failed image operation was not recorded as skipped: %#v", imageOperation)
+	}
+	remote.mu.Lock()
+	_, imageUploaded := remote.entries[imagePath]
+	remote.mu.Unlock()
+	if imageUploaded {
+		t.Fatal("failed image was unexpectedly uploaded")
 	}
 }
 
