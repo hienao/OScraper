@@ -43,7 +43,7 @@ export function SupportPage() {
 
     <div className="grid gap-5 lg:grid-cols-2">
       {methods.map((method) => <Panel key={method.key} title={t(`support.methods.${method.key}.title`)} description={t(`support.methods.${method.key}.description`)} icon={<span className={`grid size-9 place-items-center rounded-xl text-sm font-bold ${method.markClass}`}>{method.mark}</span>} action={<Badge variant="outline" className={method.badgeClass}>{t(`support.methods.${method.key}.badge`)}</Badge>}>
-        <div className="mx-auto flex aspect-[2/3] w-full max-w-sm items-center justify-center overflow-hidden rounded-2xl border border-neutral-200 bg-white p-2 shadow-sm dark:border-neutral-700">
+        <div className="mx-auto flex aspect-[2/3] w-full max-w-64 items-center justify-center overflow-hidden rounded-2xl border border-neutral-200 bg-white p-2 shadow-sm dark:border-neutral-700">
           <img className="block max-h-full w-full rounded-xl object-contain" src={method.image} alt={t(`support.methods.${method.key}.imageAlt`)} />
         </div>
         <p className="mx-auto mt-4 max-w-md text-center text-sm leading-6 text-neutral-500">{t(`support.methods.${method.key}.note`)}</p>

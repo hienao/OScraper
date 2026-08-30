@@ -36,6 +36,18 @@ type DirectoryEntry struct {
 	Sign     string `json:"-"`
 }
 
+type DirectoryWarning struct {
+	Code             string `json:"code"`
+	Name             string `json:"name"`
+	Reason           string `json:"reason"`
+	InvalidCharacter string `json:"invalid_character,omitempty"`
+}
+
+type DirectoryListing struct {
+	Entries  []DirectoryEntry
+	Warnings []DirectoryWarning
+}
+
 type apiResponse struct {
 	Code    int      `json:"code"`
 	Message string   `json:"message"`
@@ -224,30 +236,46 @@ func IsWithinPath(root, candidate string) bool {
 }
 
 func (c *Client) ListDirectory(ctx context.Context, rawBaseURL, token, remotePath string, refresh bool) ([]DirectoryEntry, error) {
-	baseURL, err := NormalizeBaseURL(rawBaseURL)
+	listing, err := c.listDirectory(ctx, rawBaseURL, token, remotePath, refresh)
 	if err != nil {
 		return nil, err
+	}
+	if len(listing.Warnings) > 0 {
+		warning := listing.Warnings[0]
+		return nil, &APIError{Code: "openlist.invalid_response", Message: fmt.Sprintf("OpenList returned an unsafe directory entry name %s: %s", quotedEntryName(warning.Name), directoryWarningDescription(warning))}
+	}
+	return listing.Entries, nil
+}
+
+func (c *Client) ListDirectoryWithWarnings(ctx context.Context, rawBaseURL, token, remotePath string, refresh bool) (DirectoryListing, error) {
+	return c.listDirectory(ctx, rawBaseURL, token, remotePath, refresh)
+}
+
+func (c *Client) listDirectory(ctx context.Context, rawBaseURL, token, remotePath string, refresh bool) (DirectoryListing, error) {
+	baseURL, err := NormalizeBaseURL(rawBaseURL)
+	if err != nil {
+		return DirectoryListing{}, err
 	}
 	normalizedPath, err := NormalizeRemotePath(remotePath)
 	if err != nil {
-		return nil, err
+		return DirectoryListing{}, err
 	}
 	endpoint, err := url.Parse(baseURL + "/api/fs/list")
 	if err != nil {
-		return nil, &APIError{Code: "openlist.invalid_url", Message: "OpenList URL is invalid", Cause: err}
+		return DirectoryListing{}, &APIError{Code: "openlist.invalid_url", Message: "OpenList URL is invalid", Cause: err}
 	}
 	if err := ValidateEndpoint(ctx, endpoint); err != nil {
-		return nil, err
+		return DirectoryListing{}, err
 	}
 	body, err := json.Marshal(map[string]interface{}{
 		"path": normalizedPath, "password": "", "page": 1, "per_page": 0, "refresh": refresh,
 	})
 	if err != nil {
-		return nil, &APIError{Code: "openlist.request_failed", Message: "Failed to encode OpenList request", Cause: err}
+		return DirectoryListing{}, &APIError{Code: "openlist.request_failed", Message: "Failed to encode OpenList request", Cause: err}
 	}
 	request, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint.String(), strings.NewReader(string(body)))
 	if err != nil {
-		return nil, &APIError{Code: "openlist.request_failed", Message: "Failed to create OpenList request", Cause: err}
+		return DirectoryListing{}, &APIError{Code: "openlist.request_failed", Message: "Failed to create OpenList request", Cause: err}
 	}
 	request.Header.Set("Content-Type", "application/json")
 	request.Header.Set("Accept", "application/json")
@@ -255,30 +283,32 @@ func (c *Client) ListDirectory(ctx context.Context, rawBaseURL, token, remotePat
 	request.Header.Set("User-Agent", "OScraper/1.0")
 	response, err := c.httpClient.Do(request)
 	if err != nil {
-		return nil, &APIError{Code: "openlist.connection_failed", Message: "Could not read OpenList directory", Cause: err}
+		return DirectoryListing{}, &APIError{Code: "openlist.connection_failed", Message: "Could not read OpenList directory", Cause: err}
 	}
 	defer response.Body.Close()
 	responseBody, err := io.ReadAll(io.LimitReader(response.Body, maxResponseBytes))
 	if err != nil {
-		return nil, &APIError{Code: "openlist.invalid_response", Message: "Could not read OpenList response", Cause: err}
+		return DirectoryListing{}, &APIError{Code: "openlist.invalid_response", Message: "Could not read OpenList response", Cause: err}
 	}
 	if response.StatusCode == http.StatusUnauthorized || response.StatusCode == http.StatusForbidden {
-		return nil, &APIError{Code: "openlist.authentication_failed", Message: "OpenList token is invalid or lacks permission"}
+		return DirectoryListing{}, &APIError{Code: "openlist.authentication_failed", Message: "OpenList token is invalid or lacks permission"}
 	}
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		return nil, &APIError{Code: "openlist.http_error", Message: fmt.Sprintf("OpenList returned HTTP %d", response.StatusCode)}
+		return DirectoryListing{}, &APIError{Code: "openlist.http_error", Message: fmt.Sprintf("OpenList returned HTTP %d", response.StatusCode)}
 	}
 	var payload directoryResponse
 	if err := json.Unmarshal(responseBody, &payload); err != nil {
-		return nil, &APIError{Code: "openlist.invalid_response", Message: "OpenList returned invalid JSON", Cause: err}
+		return DirectoryListing{}, &APIError{Code: "openlist.invalid_response", Message: "OpenList returned invalid JSON", Cause: err}
 	}
 	if payload.Code != 200 {
-		return nil, &APIError{Code: "openlist.api_error", Message: firstNonBlank(payload.Message, "OpenList rejected the directory request")}
+		return DirectoryListing{}, &APIError{Code: "openlist.api_error", Message: firstNonBlank(payload.Message, "OpenList rejected the directory request")}
 	}
 	entries := make([]DirectoryEntry, 0, len(payload.Data.Content))
+	warnings := make([]DirectoryWarning, 0)
 	for _, item := range payload.Data.Content {
-		if reason := invalidEntryNameReason(item.Name); reason != "" {
-			return nil, &APIError{Code: "openlist.invalid_response", Message: fmt.Sprintf("OpenList returned an unsafe directory entry name %s: %s", quotedEntryName(item.Name), reason)}
+		if warning, invalid := invalidEntryNameWarning(item.Name); invalid {
+			warnings = append(warnings, warning)
+			continue
 		}
 		entries = append(entries, DirectoryEntry{
 			Name: item.Name, Path: joinRemotePath(normalizedPath, item.Name), IsDir: item.IsDir,
@@ -291,7 +321,7 @@ func (c *Client) ListDirectory(ctx context.Context, rawBaseURL, token, remotePat
 		}
 		return strings.ToLower(entries[left].Name) < strings.ToLower(entries[right].Name)
 	})
-	return entries, nil
+	return DirectoryListing{Entries: entries, Warnings: warnings}, nil
 }
 
 func validEntryName(name string) bool {
@@ -299,21 +329,52 @@ func validEntryName(name string) bool {
 }
 
 func invalidEntryNameReason(name string) string {
+	warning, invalid := invalidEntryNameWarning(name)
+	if !invalid {
+		return ""
+	}
+	return directoryWarningDescription(warning)
+}
+
+func invalidEntryNameWarning(name string) (DirectoryWarning, bool) {
+	warning := DirectoryWarning{Code: "openlist.unsafe_entry_skipped", Name: name}
 	if name == "" {
-		return "the name is empty"
+		warning.Reason = "empty_name"
+		return warning, true
 	}
 	if name == "." || name == ".." {
-		return "dot segments are not allowed"
+		warning.Reason = "dot_segment"
+		warning.InvalidCharacter = name
+		return warning, true
 	}
 	if strings.ContainsRune(name, '/') {
-		return "the name contains a path separator"
+		warning.Reason = "path_separator"
+		warning.InvalidCharacter = "/"
+		return warning, true
 	}
 	for _, character := range name {
 		if character == 0 || character < 32 || character == 127 {
-			return "the name contains control characters"
+			warning.Reason = "control_character"
+			warning.InvalidCharacter = fmt.Sprintf("U+%04X", character)
+			return warning, true
 		}
 	}
-	return ""
+	return DirectoryWarning{}, false
+}
+
+func directoryWarningDescription(warning DirectoryWarning) string {
+	switch warning.Reason {
+	case "empty_name":
+		return "the name is empty"
+	case "dot_segment":
+		return "dot segments are not allowed"
+	case "path_separator":
+		return "the name contains a path separator"
+	case "control_character":
+		return "the name contains control characters"
+	default:
+		return "the name is unsafe"
+	}
 }
 
 func quotedEntryName(name string) string {

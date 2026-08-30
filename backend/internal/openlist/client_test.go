@@ -128,6 +128,28 @@ func TestListDirectoryRejectsUnsafeEntryNames(t *testing.T) {
 	}
 }
 
+func TestListDirectoryWithWarningsSkipsUnsafeEntries(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		writer.Header().Set("Content-Type", "application/json")
+		_, _ = writer.Write([]byte(`{"code":200,"data":{"content":[{"name":"Movies","is_dir":true},{"name":"Harry Potter /DTS","is_dir":true}]}}`))
+	}))
+	defer server.Close()
+	listing, err := NewClient(time.Second).ListDirectoryWithWarnings(context.Background(), server.URL, "token", "/media", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(listing.Entries) != 1 || listing.Entries[0].Name != "Movies" {
+		t.Fatalf("safe entries were not preserved: %#v", listing.Entries)
+	}
+	if len(listing.Warnings) != 1 {
+		t.Fatalf("unexpected warnings: %#v", listing.Warnings)
+	}
+	warning := listing.Warnings[0]
+	if warning.Code != "openlist.unsafe_entry_skipped" || warning.Name != "Harry Potter /DTS" || warning.Reason != "path_separator" || warning.InvalidCharacter != "/" {
+		t.Fatalf("unexpected warning: %#v", warning)
+	}
+}
+
 func TestListDirectoryAllowsBackslashAsLiteralNameCharacter(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
 		writer.Header().Set("Content-Type", "application/json")

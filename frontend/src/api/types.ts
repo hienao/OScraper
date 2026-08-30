@@ -104,11 +104,19 @@ export interface DirectoryNode {
   modified?: string
 }
 
+export interface DirectoryWarning {
+  code: 'openlist.unsafe_entry_skipped'
+  name: string
+  reason: 'empty_name' | 'dot_segment' | 'path_separator' | 'control_character'
+  invalid_character?: string
+}
+
 export interface DirectoryLevel {
   target_id: number
   root_path: string
   path: string
   entries: DirectoryNode[]
+  warnings?: DirectoryWarning[]
 }
 
 export interface MediaCandidate {
