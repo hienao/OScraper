@@ -8,7 +8,7 @@ import { useState, type FormEvent } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useNavigate } from 'react-router-dom'
 import { connectionApi, jobApi, localStorageApi, previewApi, targetApi } from '@/api/services'
-import type { LibraryType, LocalStorageStatus, MediaCandidate, ScanRun, ScrapePreview, ScrapeTarget, SourceType, TargetInput, TMDBSearchResult } from '@/api/types'
+import type { DirectoryWarning, LibraryType, LocalStorageStatus, MediaCandidate, ScanRun, ScrapePreview, ScrapeTarget, SourceType, TargetInput, TMDBSearchResult } from '@/api/types'
 import { AppDialog } from '@/components/common/app-dialog'
 import { AppSelect } from '@/components/common/app-select'
 import { CheckboxField } from '@/components/common/checkbox-field'
@@ -36,6 +36,34 @@ function localStatusDescription(status: LocalStorageStatus, t: TFunction) {
   if (!status.readable) return t('targets.localUnreadable', { root: status.root, uid: status.uid, groups })
   if (!status.writable) return t('targets.localReadOnly', { root: status.root, uid: status.uid, groups })
   return t('targets.localWritable', { root: status.root, uid: status.uid, groups })
+}
+
+const warningTranslationKeys: Record<DirectoryWarning['reason'], string> = {
+  empty_name: 'emptyName',
+  dot_segment: 'dotSegment',
+  path_separator: 'pathSeparator',
+  control_character: 'controlCharacter',
+}
+
+function DirectoryWarningsNotice({ warnings, t }: { warnings?: DirectoryWarning[]; t: TFunction }) {
+  if (!warnings?.length) return null
+  const groups = new Map<string, DirectoryWarning[]>()
+  for (const warning of warnings) {
+    const key = `${warning.reason}:${warning.invalid_character ?? ''}`
+    groups.set(key, [...(groups.get(key) ?? []), warning])
+  }
+  return <div className="mt-4 space-y-2">
+    {[...groups.values()].map((group) => {
+      const first = group[0]
+      const visible = group.slice(0, 3)
+      return <Message key={`${first.reason}:${first.invalid_character ?? ''}`} variant="warning">
+        <span className="block font-medium">{t(`targets.unsafeEntries.${warningTranslationKeys[first.reason]}`, { count: group.length, character: first.invalid_character })}</span>
+        <span className="mt-1 block text-xs text-neutral-600 dark:text-neutral-300">{t('targets.unsafeEntries.affected')}</span>
+        {visible.map((warning, index) => <span key={`${warning.name}:${index}`} className="block min-w-0 truncate font-mono text-xs" title={warning.name}>{warning.name || t('targets.unsafeEntries.emptyNameLabel')}</span>)}
+        {group.length > visible.length && <span className="mt-1 block text-xs text-neutral-500">{t('targets.unsafeEntries.more', { count: group.length - visible.length })}</span>}
+      </Message>
+    })}
+  </div>
 }
 
 export function TargetsPage() {
@@ -267,6 +295,7 @@ export function TargetsPage() {
 
       <AppDialog open={remoteBrowserOpen} onOpenChange={setRemoteBrowserOpen} width="md" closeLabel={t('common.close')} title={t('targets.openListBrowserTitle')} description={<span className="break-all font-mono text-xs">{remoteBrowserPath}</span>}>
             <div className="mt-5 flex flex-wrap gap-2"><Button size="sm" variant="outline" className="gap-2" disabled={remoteBrowserPath === normalizeRemotePath(remoteTree.data?.root_path ?? selectedConnection?.base_path ?? '/')} onClick={remoteGoUp}><ArrowLeft size={15} />{t('targets.up')}</Button><Button size="sm" onClick={() => { setForm({ ...form, root_path: remoteBrowserPath }); setRemoteBrowserOpen(false) }}>{t('targets.selectDirectory')}</Button></div>
+            <DirectoryWarningsNotice warnings={remoteTree.data?.warnings} t={t} />
             <div className="mt-4 overflow-x-clip rounded-xl border border-neutral-200 dark:border-neutral-800">
               {remoteTree.isLoading && <p className="p-5 text-sm text-neutral-500">{t('common.loading')}</p>}
               {remoteTree.error && <div className="p-4"><Message variant="error">{errorMessage(remoteTree.error, t('targets.browserError'))}</Message></div>}
@@ -287,6 +316,7 @@ export function TargetsPage() {
 
       {browsing && <AppDialog open onOpenChange={(open) => { if (!open) setBrowsing(null) }} width="md" closeLabel={t('common.close')} title={`${t('targets.browserTitle')} · ${browsing.name}`} description={<span className="break-all font-mono text-xs">{browserPath}</span>}>
             <div className="mt-5 flex flex-wrap gap-2"><Button size="sm" variant="outline" className="gap-2" disabled={browserPath === browsing.root_path} onClick={goUp}><ArrowLeft size={15} />{t('targets.up')}</Button><Button size="sm" variant="outline" className="gap-2" disabled={tree.isFetching || refreshTree.isPending} onClick={() => refreshTree.mutate()}><Refresh size={15} />{t('common.refresh')}</Button></div>
+            <DirectoryWarningsNotice warnings={tree.data?.warnings} t={t} />
             <div className="mt-4 overflow-x-clip rounded-xl border border-neutral-200 dark:border-neutral-800">
               {tree.isLoading && <p className="p-5 text-sm text-neutral-500">{t('common.loading')}</p>}
               {tree.error && <div className="p-4"><Message variant="error">{errorMessage(tree.error, t('targets.browserError'))}</Message></div>}

@@ -19,6 +19,10 @@ type DirectoryBrowser interface {
 	ListDirectory(ctx context.Context, baseURL, token, path string, refresh bool) ([]openlist.DirectoryEntry, error)
 }
 
+type warningDirectoryBrowser interface {
+	ListDirectoryWithWarnings(ctx context.Context, baseURL, token, path string, refresh bool) (openlist.DirectoryListing, error)
+}
+
 type TargetService struct {
 	targets     *repository.TargetRepository
 	connections *repository.ConnectionRepository
@@ -62,10 +66,11 @@ type DirectoryNode struct {
 }
 
 type DirectoryLevel struct {
-	TargetID uint            `json:"target_id"`
-	RootPath string          `json:"root_path"`
-	Path     string          `json:"path"`
-	Entries  []DirectoryNode `json:"entries"`
+	TargetID uint                        `json:"target_id"`
+	RootPath string                      `json:"root_path"`
+	Path     string                      `json:"path"`
+	Entries  []DirectoryNode             `json:"entries"`
+	Warnings []openlist.DirectoryWarning `json:"warnings,omitempty"`
 }
 
 func NewTargetService(db *gorm.DB, cipher *cryptoutil.Cipher, client DirectoryBrowser, localRoots ...string) *TargetService {
@@ -200,15 +205,15 @@ func (s *TargetService) Browse(ctx context.Context, id uint, requestedPath strin
 	if normalizeErr != nil || !openlist.IsWithinPath(target.RootPath, normalized) {
 		return nil, Forbidden("target.path_outside_root", "Requested path is outside the scrape target root")
 	}
-	entries, err := s.listTargetDirectory(ctx, target, normalized, refresh)
+	listing, err := s.listTargetDirectoryForBrowse(ctx, target, normalized, refresh)
 	if err != nil {
 		return nil, err
 	}
-	nodes := make([]DirectoryNode, 0, len(entries))
-	for _, entry := range entries {
+	nodes := make([]DirectoryNode, 0, len(listing.Entries))
+	for _, entry := range listing.Entries {
 		nodes = append(nodes, DirectoryNode{Name: entry.Name, Path: entry.Path, IsDir: entry.IsDir, Size: entry.Size, Modified: entry.Modified})
 	}
-	return &DirectoryLevel{TargetID: target.ID, RootPath: target.RootPath, Path: normalized, Entries: nodes}, nil
+	return &DirectoryLevel{TargetID: target.ID, RootPath: target.RootPath, Path: normalized, Entries: nodes, Warnings: listing.Warnings}, nil
 }
 
 func (s *TargetService) BrowseConnection(ctx context.Context, id uint, requestedPath string, refresh bool) (*DirectoryLevel, error) {
@@ -238,15 +243,15 @@ func (s *TargetService) BrowseConnection(ctx context.Context, id uint, requested
 	if err != nil {
 		return nil, Internal("connection.decryption_failed", "Stored OpenList token cannot be decrypted", err)
 	}
-	entries, err := s.client.ListDirectory(ctx, connection.BaseURL, token, normalized, refresh)
+	listing, err := s.listOpenListDirectoryForBrowse(ctx, connection.BaseURL, token, normalized, refresh)
 	if err != nil {
 		return nil, mapOpenListError(err)
 	}
-	nodes := make([]DirectoryNode, 0, len(entries))
-	for _, entry := range entries {
+	nodes := make([]DirectoryNode, 0, len(listing.Entries))
+	for _, entry := range listing.Entries {
 		nodes = append(nodes, DirectoryNode{Name: entry.Name, Path: entry.Path, IsDir: entry.IsDir, Size: entry.Size, Modified: entry.Modified})
 	}
-	return &DirectoryLevel{RootPath: accountRoot, Path: normalized, Entries: nodes}, nil
+	return &DirectoryLevel{RootPath: accountRoot, Path: normalized, Entries: nodes, Warnings: listing.Warnings}, nil
 }
 
 func (s *TargetService) validate(ctx context.Context, request SaveTargetCommand, excludeID uint) (string, *uint, string, string, error) {
@@ -346,23 +351,32 @@ func (s *TargetService) normalizeTargetPath(target *model.ScrapeTarget, value st
 	return openlist.NormalizeRemotePath(value)
 }
 
-func (s *TargetService) listTargetDirectory(ctx context.Context, target *model.ScrapeTarget, path string, refresh bool) ([]openlist.DirectoryEntry, error) {
+func (s *TargetService) listTargetDirectoryForBrowse(ctx context.Context, target *model.ScrapeTarget, path string, refresh bool) (openlist.DirectoryListing, error) {
 	if sourceType(target) == "local" {
-		return s.local.ListDirectory(ctx, path, false)
+		entries, err := s.local.ListDirectory(ctx, path, false)
+		return openlist.DirectoryListing{Entries: entries}, err
 	}
 	connection, err := s.requireTargetConnection(target)
 	if err != nil {
-		return nil, err
+		return openlist.DirectoryListing{}, err
 	}
 	token, err := s.cipher.Decrypt(connection.EncryptedToken)
 	if err != nil {
-		return nil, Internal("connection.decryption_failed", "Stored OpenList token cannot be decrypted", err)
+		return openlist.DirectoryListing{}, Internal("connection.decryption_failed", "Stored OpenList token cannot be decrypted", err)
 	}
-	entries, err := s.client.ListDirectory(ctx, connection.BaseURL, token, path, refresh)
+	listing, err := s.listOpenListDirectoryForBrowse(ctx, connection.BaseURL, token, path, refresh)
 	if err != nil {
-		return nil, mapOpenListError(err)
+		return openlist.DirectoryListing{}, mapOpenListError(err)
 	}
-	return entries, nil
+	return listing, nil
+}
+
+func (s *TargetService) listOpenListDirectoryForBrowse(ctx context.Context, baseURL, token, path string, refresh bool) (openlist.DirectoryListing, error) {
+	if client, ok := s.client.(warningDirectoryBrowser); ok {
+		return client.ListDirectoryWithWarnings(ctx, baseURL, token, path, refresh)
+	}
+	entries, err := s.client.ListDirectory(ctx, baseURL, token, path, refresh)
+	return openlist.DirectoryListing{Entries: entries}, err
 }
 
 func (s *TargetService) requireTargetConnection(target *model.ScrapeTarget) (*model.OpenListConnection, error) {

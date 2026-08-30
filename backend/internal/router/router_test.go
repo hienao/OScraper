@@ -34,7 +34,7 @@ func TestAuthenticatedConnectionTargetAndScanFlow(t *testing.T) {
 			}
 			switch input.Path {
 			case "/media":
-				_, _ = writer.Write([]byte(`{"code":200,"data":{"content":[{"name":"Movies","is_dir":true}]}}`))
+				_, _ = writer.Write([]byte(`{"code":200,"data":{"content":[{"name":"Movies","is_dir":true},{"name":"Harry Potter /DTS","is_dir":true}]}}`))
 			case "/media/Movies":
 				_, _ = writer.Write([]byte(`{"code":200,"data":{"content":[{"name":"Arrival (2016)","is_dir":true}]}}`))
 			case "/media/Movies/Arrival (2016)":
@@ -126,6 +126,14 @@ func TestAuthenticatedConnectionTargetAndScanFlow(t *testing.T) {
 	connectionTreeData := responseData(t, connectionTree)
 	if connectionTreeData["root_path"] != "/media" || connectionTreeData["path"] != "/media" || len(connectionTreeData["entries"].([]any)) != 1 {
 		t.Fatalf("unexpected connection tree response: %s", connectionTree)
+	}
+	warnings := connectionTreeData["warnings"].([]any)
+	if len(warnings) != 1 {
+		t.Fatalf("unexpected connection tree warnings: %s", connectionTree)
+	}
+	warning := warnings[0].(map[string]any)
+	if warning["code"] != "openlist.unsafe_entry_skipped" || warning["reason"] != "path_separator" || warning["invalid_character"] != "/" || warning["name"] != "Harry Potter /DTS" {
+		t.Fatalf("unexpected connection tree warning: %#v", warning)
 	}
 	target := requestJSON(t, server.URL, http.MethodPost, "/api/scrape-targets", token, map[string]any{
 		"connection_id": connectionID, "name": "Movies", "root_path": "/media/Movies", "library_type": "movie", "rename_enabled": true, "enabled": true,
