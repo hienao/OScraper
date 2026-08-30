@@ -9,7 +9,7 @@ const en = {
     theme: { dark: 'Use dark theme', light: 'Use light theme' },
     navigation: {
       aria: 'Application navigation', open: 'Open navigation', close: 'Close navigation', skip: 'Skip to content', logout: 'Log out',
-      primary: 'Workspace', administration: 'Administration', overview: 'Overview', connections: 'OpenList connections', targets: 'Scrape targets', jobs: 'Scrape jobs', settings: 'Scraping settings', logs: 'Logs', profile: 'Profile', administrator: 'Administrator',
+      primary: 'Workspace', administration: 'Administration', overview: 'Overview', connections: 'OpenList connections', targets: 'Scrape targets', jobs: 'Scrape jobs', settings: 'Scraping settings', logs: 'Logs', support: 'Support OScraper', profile: 'Profile', administrator: 'Administrator',
     },
     auth: {
       login: { title: 'Welcome back', description: 'Sign in to manage OpenList scraping', username: 'Username', password: 'Password', submit: 'Sign in', submitting: 'Signing in…', hint: 'First start: use admin / admin, then set permanent credentials.', failed: 'Sign-in failed' },
@@ -18,6 +18,12 @@ const en = {
     dashboard: {
       eyebrow: 'Scrape with confidence', title: 'Your media, organized and enriched', description: 'Use OpenList or a local /media directory, constrain a media root, and run a read-only candidate scan. TMDB matching and execution build on the saved fingerprint.',
       connections: 'Connections', connectionsDescription: 'Configured OpenList servers', jobs: 'Scrape jobs', jobsDescription: 'Persistent execution history and progress', safety: 'Safety first', safetyDescription: 'Tokens are encrypted and never returned by the API', getStarted: 'Add your first connection',
+    },
+    support: {
+      eyebrow: 'Support the project', title: 'If OScraper has saved you time, you can help keep it moving', description: 'OScraper has no ads, memberships, or required payments. Storage compatibility, metadata edge cases, safe execution, and every release still require continued testing and maintenance. If the project has made your media workflow easier, a voluntary tip helps fund the next improvement.', quote: 'Every contribution becomes another real storage test, another careful fix, and more time to keep OScraper dependable.', thanks: 'Thank you for supporting independent maintenance.',
+      tags: { compatibility: 'Storage compatibility', testing: 'Real-world testing', maintenance: 'Ongoing maintenance' },
+      methods: { wechat: { title: 'WeChat sponsor code', description: 'A quick way to show your support', badge: 'WeChat', imageAlt: 'WeChat sponsor payment code', note: 'Any amount is appreciated and will be used for continued project maintenance.' }, alipay: { title: 'Alipay sponsor code', description: 'Help give the project room to improve', badge: 'Alipay', imageAlt: 'Alipay sponsor payment code', note: 'Supporting the project is always optional and never changes access to its features.' } },
+      other: { title: 'Support does not have to be financial', description: 'Using OScraper thoughtfully and helping it improve matters just as much.', issues: { title: 'Report reproducible issues', description: 'Clear steps, logs with secrets removed, and representative directory structures make fixes much faster.' }, sharing: { title: 'Share with people who need it', description: 'Recommend OScraper to self-hosters who value controlled, reviewable media organization.' } }, voluntary: 'Sponsorship is completely voluntary. OScraper features are not gated by payment, and choosing not to contribute will never reduce functionality.',
     },
     connections: {
       title: 'OpenList connections', description: 'Connections are validated before saving. Tokens are encrypted and never shown again.', add: 'Add connection', empty: 'No OpenList connections yet.', emptyDescription: 'Add a server to begin browsing media directories.',
@@ -78,7 +84,7 @@ const zhCN = {
     theme: { dark: '切换到深色主题', light: '切换到浅色主题' },
     navigation: {
       aria: '应用导航', open: '打开导航', close: '关闭导航', skip: '跳到主要内容', logout: '退出登录',
-      primary: '工作台', administration: '管理', overview: '概览', connections: 'OpenList 连接', targets: '刮削目标', jobs: '刮削作业', settings: '刮削设置', logs: '日志', profile: '个人资料', administrator: '管理员',
+      primary: '工作台', administration: '管理', overview: '概览', connections: 'OpenList 连接', targets: '刮削目标', jobs: '刮削作业', settings: '刮削设置', logs: '日志', support: '赞赏支持', profile: '个人资料', administrator: '管理员',
     },
     auth: {
       login: { title: '欢迎回来', description: '登录后管理 OpenList 刮削', username: '用户名', password: '密码', submit: '登录', submitting: '登录中…', hint: '首次启动请使用 admin / admin，随后设置正式凭据。', failed: '登录失败' },
@@ -87,6 +93,12 @@ const zhCN = {
     dashboard: {
       eyebrow: '安心刮削', title: '整理并丰富你的媒体目录', description: '使用 OpenList 或挂载到 /media 的本地目录，约束媒体根目录并执行只读扫描；后续 TMDB 匹配与执行基于已保存的目录指纹。',
       connections: '连接', connectionsDescription: '已配置的 OpenList 服务器', jobs: '刮削作业', jobsDescription: '持久化执行历史和进度', safety: '安全优先', safetyDescription: 'Token 加密保存且 API 永不返回明文', getStarted: '添加第一个连接',
+    },
+    support: {
+      eyebrow: 'SUPPORT THE PROJECT', title: '如果 OScraper 替你省下了时间，欢迎支持它继续前进', description: 'OScraper 没有广告、会员或强制付费。存储兼容、元数据边界、安全执行和每一次版本发布，都需要持续投入测试与维护。如果它让你的媒体整理更轻松，一份自愿赞赏会成为下一次改进的动力。', quote: '你的每一份支持，都会变成一次真实存储测试、一次认真修复，以及让 OScraper 保持可靠的更多时间。', thanks: '感谢你对独立维护的认可与支持。',
+      tags: { compatibility: '存储兼容', testing: '真实环境测试', maintenance: '持续维护' },
+      methods: { wechat: { title: '微信赞赏码', description: '感谢你的认可与支持', badge: '微信', imageAlt: '微信赞赏收款码', note: '金额不论多少，都会认真用于项目的持续维护。' }, alipay: { title: '支付宝收款码', description: '让项目有余力继续完善', badge: '支付宝', imageAlt: '支付宝赞赏收款码', note: '赞赏始终自愿，也不会影响任何功能的正常使用。' } },
+      other: { title: '支持不只有赞赏', description: '认真使用 OScraper、帮助它持续改进，同样珍贵。', issues: { title: '反馈可复现的问题', description: '提供清晰步骤、移除敏感信息的日志和有代表性的目录结构，可以显著加快修复。' }, sharing: { title: '分享给真正需要的人', description: '把 OScraper 推荐给重视可控、可预览媒体整理流程的自托管用户。' } }, voluntary: '赞赏完全自愿。OScraper 不会把功能与付费绑定，不赞赏也不会减少任何功能。',
     },
     connections: {
       title: 'OpenList 连接', description: '连接保存前会自动验证，Token 加密保存且不会再次显示。', add: '添加连接', empty: '还没有 OpenList 连接。', emptyDescription: '添加服务器后即可开始浏览媒体目录。',

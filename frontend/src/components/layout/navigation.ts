@@ -1,4 +1,4 @@
-import { Activity, FileText, Home, Movie, Plug, Settings, User } from '@appica/icons-react'
+import { Activity, FileText, Heart, Home, Movie, Plug, Settings, User } from '@appica/icons-react'
 
 export const navigation = [
   { to: '/', label: 'navigation.overview', icon: Home, end: true },
@@ -7,6 +7,7 @@ export const navigation = [
   { to: '/jobs', label: 'navigation.jobs', icon: Activity, end: true },
   { to: '/settings', label: 'navigation.settings', icon: Settings, end: true },
   { to: '/logs', label: 'navigation.logs', icon: FileText, end: true },
+  { to: '/support', label: 'navigation.support', icon: Heart, end: true },
 ]
 
 export const profileNavigation = { to: '/profile', label: 'navigation.profile', icon: User, end: true }
@@ -17,6 +18,7 @@ export function titleKey(pathname: string) {
   if (pathname === '/jobs') return 'navigation.jobs'
   if (pathname === '/settings') return 'navigation.settings'
   if (pathname === '/logs') return 'navigation.logs'
+  if (pathname === '/support') return 'navigation.support'
   if (pathname === '/profile') return 'navigation.profile'
   return 'navigation.overview'
 }

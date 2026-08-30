@@ -11,6 +11,7 @@ const JobsPage = lazy(() => import('@/pages/jobs-page').then((module) => ({ defa
 const ProfilePage = lazy(() => import('@/pages/profile-page').then((module) => ({ default: module.ProfilePage })))
 const TargetsPage = lazy(() => import('@/pages/targets-page').then((module) => ({ default: module.TargetsPage })))
 const SettingsPage = lazy(() => import('@/pages/settings-page').then((module) => ({ default: module.SettingsPage })))
+const SupportPage = lazy(() => import('@/pages/support-page').then((module) => ({ default: module.SupportPage })))
 
 export const router = createBrowserRouter([
   {
@@ -26,6 +27,7 @@ export const router = createBrowserRouter([
           { path: 'jobs', element: <JobsPage /> },
           { path: 'settings', element: <SettingsPage /> },
           { path: 'logs', element: <LogsPage /> },
+          { path: 'support', element: <SupportPage /> },
           { path: 'profile', element: <ProfilePage /> },
         ],
       },
