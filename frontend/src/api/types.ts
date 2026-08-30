@@ -126,6 +126,7 @@ export interface MediaCandidate {
   tmdb_id?: number
   confidence: number
   video_count: number
+  scraped: boolean
   status: 'ready' | 'needs_review'
   created_at: string
 }
@@ -136,6 +137,7 @@ export interface ScanRun {
   status: 'pending' | 'running' | 'succeeded' | 'failed'
   candidate_count: number
   video_count: number
+  scraped_candidate_count: number
   error_code?: string
   error_message?: string
   started_at?: string
@@ -224,6 +226,7 @@ export interface PreviewPlan {
   rename_allowed: boolean
   organize_flat_movie: boolean
   source_path: string
+  scrape_marker_path: string
   proposed_directory_name: string
   proposed_directory_path: string
   proposed_directory_creates: string[]
@@ -249,6 +252,10 @@ export interface ScrapePreview {
 
 export type JobStatus = 'pending' | 'running' | 'succeeded' | 'failed' | 'canceled'
 
+export interface JobRecordSettings {
+  retention_days: number
+}
+
 export interface ScrapeJob {
   id: number
   target_id: number
@@ -257,7 +264,7 @@ export interface ScrapeJob {
   connection_id: number
   actor_id: number
   status: JobStatus
-  stage: 'preparing' | 'renaming' | 'generating' | 'uploading' | 'verifying' | 'completed'
+  stage: 'preparing' | 'renaming' | 'generating' | 'uploading' | 'verifying' | 'marking' | 'completed'
   progress: number
   message?: string
   error_code?: string
@@ -274,7 +281,7 @@ export interface ScrapeJobOperation {
   id: number
   job_id: number
   sequence: number
-  type: 'mkdir' | 'rename' | 'move' | 'upload'
+  type: 'mkdir' | 'rename' | 'move' | 'upload' | 'marker'
   source_path?: string
   target_path: string
   artifact_kind?: string
@@ -301,4 +308,16 @@ export interface ApplicationLog {
 }
 export interface AuditLog {
   id: number; actor_id: number; action: string; target: string; detail: string; occurred_at: string
+}
+
+export type LogType = 'api' | 'application' | 'audit' | 'all'
+
+export interface LogSettings {
+  retention_days: number
+}
+
+export interface LogCleanupStats {
+  api: number
+  application: number
+  audit: number
 }

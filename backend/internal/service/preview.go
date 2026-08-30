@@ -83,6 +83,7 @@ type PreviewPlan struct {
 	SourcePath               string            `json:"source_path"`
 	ProposedDirectoryName    string            `json:"proposed_directory_name"`
 	ProposedDirectoryPath    string            `json:"proposed_directory_path"`
+	ScrapeMarkerPath         string            `json:"scrape_marker_path"`
 	ProposedDirectoryCreates []string          `json:"proposed_directory_creates"`
 	ProposedDirectoryRenames []RenameItem      `json:"proposed_directory_renames"`
 	ProposedFileRenames      []RenameItem      `json:"proposed_file_renames"`

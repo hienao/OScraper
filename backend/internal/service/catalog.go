@@ -271,6 +271,9 @@ func (s *CatalogService) runScan(ctx context.Context, scan *model.ScanRun) (*Sca
 	scan.CandidateCount = len(candidates)
 	for index := range candidates {
 		scan.VideoCount += candidates[index].VideoCount
+		if candidates[index].Scraped {
+			scan.ScrapedCount++
+		}
 		candidates[index].ScanID = scan.ID
 		candidates[index].TargetID = target.ID
 	}
@@ -413,7 +416,8 @@ func (s *CatalogService) discover(ctx context.Context, target *model.ScrapeTarge
 		if target.LibraryType == "movie" && !entry.IsDir && media.IsVideoFile(entry.Name) {
 			info := media.ParseCandidate(strings.TrimSuffix(entry.Name, path.Ext(entry.Name)), entry.Name, target.LibraryType)
 			info = s.recognizeIfNeeded(ctx, info, entry.Name, entry.Name, target.LibraryType)
-			candidates = append(candidates, makeCandidate(entry.Path, target.LibraryType, info, entry.Name, 1, relatedFlatAssets(entry.Path, rootEntries)))
+			assets := relatedFlatAssets(entry.Path, rootEntries)
+			candidates = append(candidates, makeCandidate(entry.Path, target.LibraryType, info, entry.Name, 1, assets, hasFlatScrapeMarker(entry.Path, assets)))
 			continue
 		}
 		if !entry.IsDir {
@@ -428,7 +432,7 @@ func (s *CatalogService) discover(ctx context.Context, target *model.ScrapeTarge
 		}
 		info := media.ParseCandidate(entry.Name, files.representative, target.LibraryType)
 		info = s.recognizeIfNeeded(ctx, info, path.Base(files.representative), path.Join(entry.Name, files.representative), target.LibraryType)
-		candidates = append(candidates, makeCandidate(entry.Path, target.LibraryType, info, files.representative, files.videos, files.entries))
+		candidates = append(candidates, makeCandidate(entry.Path, target.LibraryType, info, files.representative, files.videos, files.entries, hasDirectoryScrapeMarker(entry.Path, files.entries)))
 	}
 	sort.Slice(candidates, func(i, j int) bool { return candidates[i].Path < candidates[j].Path })
 	return candidates, nil
@@ -513,7 +517,7 @@ func (s *CatalogService) waitForReadQuota(ctx context.Context, connection *model
 	return s.quota.Wait(ctx, connection)
 }
 
-func makeCandidate(candidatePath, kind string, info media.Info, representative string, videoCount int, entries []openlist.DirectoryEntry) model.MediaCandidate {
+func makeCandidate(candidatePath, kind string, info media.Info, representative string, videoCount int, entries []openlist.DirectoryEntry, scraped bool) model.MediaCandidate {
 	status := "ready"
 	if info.Confidence < 70 {
 		status = "needs_review"
@@ -523,13 +527,16 @@ func makeCandidate(candidatePath, kind string, info media.Info, representative s
 		Path: candidatePath, Kind: kind, Fingerprint: fingerprint(entries), RepresentativeFile: representative,
 		ManifestJSON: string(manifest),
 		ParsedTitle:  info.Title, Year: info.Year, Season: info.Season, Episode: info.Episode, TMDBID: info.TMDBID,
-		Confidence: info.Confidence, VideoCount: videoCount, Status: status,
+		Confidence: info.Confidence, VideoCount: videoCount, Scraped: scraped, Status: status,
 	}
 }
 
 func fingerprint(entries []openlist.DirectoryEntry) string {
 	lines := make([]string, 0, len(entries))
 	for _, entry := range entries {
+		if !entry.IsDir && isScrapeMarkerName(entry.Name) {
+			continue
+		}
 		lines = append(lines, fmt.Sprintf("%s\x00%t\x00%d\x00%s\x00%s", entry.Path, entry.IsDir, entry.Size, entry.Modified, entry.Sign))
 	}
 	sort.Strings(lines)
@@ -577,6 +584,6 @@ func (s *CatalogService) requireTarget(id uint) (*model.ScrapeTarget, error) {
 }
 
 func (s *CatalogService) recordScanAudit(actorID uint, target *model.ScrapeTarget, scan *model.ScanRun) {
-	detail := fmt.Sprintf(`{"scan_id":%d,"candidate_count":%d,"video_count":%d}`, scan.ID, scan.CandidateCount, scan.VideoCount)
+	detail := fmt.Sprintf(`{"scan_id":%d,"candidate_count":%d,"scraped_candidate_count":%d,"video_count":%d}`, scan.ID, scan.CandidateCount, scan.ScrapedCount, scan.VideoCount)
 	_ = s.audit.Record(actorID, "target.scan", "scrape_target:"+target.Name, detail)
 }

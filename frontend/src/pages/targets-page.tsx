@@ -56,6 +56,7 @@ export function TargetsPage() {
   const [remoteBrowserPath, setRemoteBrowserPath] = useState('/')
   const [scanTarget, setScanTarget] = useState<ScrapeTarget | null>(null)
   const [scanResult, setScanResult] = useState<ScanRun | null>(null)
+  const [scrapeFilter, setScrapeFilter] = useState<'all' | 'scraped' | 'unscraped'>('all')
   const [matchCandidate, setMatchCandidate] = useState<MediaCandidate | null>(null)
   const [searchTitle, setSearchTitle] = useState('')
   const [searchYear, setSearchYear] = useState('')
@@ -142,6 +143,7 @@ export function TargetsPage() {
     setNotice(null)
     setScanTarget(target)
     setScanResult(null)
+    setScrapeFilter('all')
     scan.mutate(target)
   }
   function startMatch(candidate: MediaCandidate) {
@@ -227,6 +229,7 @@ export function TargetsPage() {
   const saving = create.isPending || update.isPending
   const currentScan = scanStatus.data ?? scanResult
   const scanActive = scan.isPending || currentScan?.status === 'pending' || currentScan?.status === 'running'
+  const visibleCandidates = currentScan?.candidates?.filter((candidate) => scrapeFilter === 'all' || (scrapeFilter === 'scraped' ? candidate.scraped : !candidate.scraped)) ?? []
 
   return (
     <div className="mx-auto max-w-7xl space-y-5 px-4 py-8 sm:px-6 lg:px-8">
@@ -301,19 +304,21 @@ export function TargetsPage() {
             {scanActive && <div className="grid min-h-48 place-items-center"><div className="text-center"><Refresh className="mx-auto animate-spin text-emerald-600" size={28} /><p className="mt-3 text-sm text-neutral-500">{t('targets.scanningDescription')}</p></div></div>}
             {scan.isError && <div className="mt-5"><Message variant="error">{errorMessage(scan.error, t('targets.scanError'))}</Message></div>}
             {scanStatus.isError && <div className="mt-5"><Message variant="error">{errorMessage(scanStatus.error, t('targets.scanError'))}</Message></div>}
-            {currentScan?.status === 'failed' && <div className="mt-5"><Message variant="error">{currentScan.error_message || t('targets.scanError')}</Message></div>}
+            {currentScan?.status === 'failed' && <div className="mt-5"><Message variant="error">{currentScan.error_code ? t(`errors.codes.${currentScan.error_code}`, { defaultValue: currentScan.error_message || t('targets.scanError') }) : currentScan.error_message || t('targets.scanError')}</Message></div>}
             {currentScan?.status === 'succeeded' && <>
               <div className="mt-5 grid gap-3 sm:grid-cols-3">
                 <div className="rounded-xl bg-neutral-50 p-4 dark:bg-neutral-900"><p className="text-xs text-neutral-500">{t('targets.candidates')}</p><p className="mt-1 text-2xl font-bold">{currentScan.candidate_count}</p></div>
                 <div className="rounded-xl bg-neutral-50 p-4 dark:bg-neutral-900"><p className="text-xs text-neutral-500">{t('targets.videoFiles')}</p><p className="mt-1 text-2xl font-bold">{currentScan.video_count}</p></div>
-                <div className="rounded-xl bg-neutral-50 p-4 dark:bg-neutral-900"><p className="text-xs text-neutral-500">{t('targets.scanStatus')}</p><p className="mt-1 text-sm font-semibold text-emerald-700 dark:text-emerald-300">{t('targets.scanSucceeded')}</p></div>
+                <div className="rounded-xl bg-neutral-50 p-4 dark:bg-neutral-900"><p className="text-xs text-neutral-500">{t('targets.scrapedCandidates')}</p><p className="mt-1 text-2xl font-bold text-emerald-700 dark:text-emerald-300">{currentScan.scraped_candidate_count}</p></div>
               </div>
               {currentScan.candidates?.length === 0 && <p className="py-12 text-center text-sm text-neutral-500">{t('targets.noCandidates')}</p>}
+              {(currentScan.candidates?.length ?? 0) > 0 && <div className="mt-4 flex justify-end"><div className="w-full sm:w-48"><AppSelect value={scrapeFilter} onValueChange={(value) => setScrapeFilter(value as typeof scrapeFilter)} ariaLabel={t('targets.scrapeFilter')} options={[{ value: 'all', label: t('targets.allScrapeStates') }, { value: 'scraped', label: t('targets.onlyScraped') }, { value: 'unscraped', label: t('targets.onlyUnscraped') }]} /></div></div>}
+              {(currentScan.candidates?.length ?? 0) > 0 && visibleCandidates.length === 0 && <p className="py-12 text-center text-sm text-neutral-500">{t('targets.noFilteredCandidates')}</p>}
               <div className="mt-4 max-h-[55vh] space-y-3 overflow-y-auto pr-1">
-                {currentScan.candidates?.map((candidate) => <article key={candidate.id || candidate.path} className="rounded-xl border border-neutral-200 p-4 dark:border-neutral-800">
-                  <div className="flex flex-wrap items-start justify-between gap-3"><div className="min-w-0"><h3 className="truncate font-semibold">{candidate.parsed_title || candidate.path.split('/').pop()}</h3><p className="mt-1 break-all font-mono text-xs text-neutral-500">{candidate.path}</p></div><Badge variant={candidate.status === 'ready' ? 'soft' : 'outline'}>{t(`targets.${candidate.status}`)}</Badge></div>
+                {visibleCandidates.map((candidate) => <article key={candidate.id || candidate.path} className="rounded-xl border border-neutral-200 p-4 dark:border-neutral-800">
+                  <div className="flex flex-wrap items-start justify-between gap-3"><div className="min-w-0"><h3 className="truncate font-semibold">{candidate.parsed_title || candidate.path.split('/').pop()}</h3><p className="mt-1 break-all font-mono text-xs text-neutral-500">{candidate.path}</p></div><div className="flex flex-wrap justify-end gap-2"><Badge variant={candidate.scraped ? 'soft' : 'outline'}>{t(candidate.scraped ? 'targets.scraped' : 'targets.notScraped')}</Badge><Badge variant={candidate.status === 'ready' ? 'soft' : 'outline'}>{t(`targets.${candidate.status}`)}</Badge></div></div>
                   <div className="mt-3 flex flex-wrap gap-2 text-xs"><Badge variant="outline">{t(`targets.${candidate.kind}`)}</Badge>{candidate.year && <Badge variant="outline">{candidate.year}</Badge>}{candidate.season !== undefined && <Badge variant="outline">S{String(candidate.season).padStart(2, '0')}</Badge>}{candidate.episode !== undefined && <Badge variant="outline">E{String(candidate.episode).padStart(2, '0')}</Badge>}{candidate.tmdb_id && <Badge variant="outline">TMDB {candidate.tmdb_id}</Badge>}<Badge variant="outline">{t('targets.confidence', { value: candidate.confidence })}</Badge><Badge variant="outline">{t('targets.videoCount', { count: candidate.video_count })}</Badge></div>
-                  <div className="mt-3"><Button size="sm" variant="outline" className="gap-2" onClick={() => startMatch(candidate)}><Movie size={15} />{t('targets.tmdbPreview')}</Button></div>
+                  <div className="mt-3"><Button size="sm" variant="outline" className="gap-2" onClick={() => startMatch(candidate)}><Movie size={15} />{t(candidate.scraped ? 'targets.rescrape' : 'targets.tmdbPreview')}</Button></div>
                 </article>)}
               </div>
             </>}

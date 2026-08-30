@@ -1,5 +1,5 @@
 import { apiRequest } from './client'
-import type { APIRequestLog, ApplicationLog, AuditLog, ConnectionTestResult, CreateConnectionInput, DirectoryLevel, JobStatus, LocalStorageStatus, MediaCandidate, OpenListConnection, Page, ScanRun, ScrapeJob, ScrapeJobOperation, ScrapePreview, ScrapingSettings, ScrapingSettingsInput, ScrapeTarget, TargetInput, TMDBSearchResult, TokenResponse, UpdateConnectionInput, User } from './types'
+import type { APIRequestLog, ApplicationLog, AuditLog, ConnectionTestResult, CreateConnectionInput, DirectoryLevel, JobRecordSettings, JobStatus, LocalStorageStatus, LogCleanupStats, LogSettings, LogType, MediaCandidate, OpenListConnection, Page, ScanRun, ScrapeJob, ScrapeJobOperation, ScrapePreview, ScrapingSettings, ScrapingSettingsInput, ScrapeTarget, TargetInput, TMDBSearchResult, TokenResponse, UpdateConnectionInput, User } from './types'
 
 export const authApi = {
   login: (body: { username: string; password: string }) => apiRequest<TokenResponse>('/api/auth/login', { method: 'POST', body, auth: false }),
@@ -59,6 +59,8 @@ export const previewApi = {
 
 export const jobApi = {
   list: (status?: JobStatus | '', page = 1, size = 50) => apiRequest<Page<ScrapeJob>>(`/api/scrape-jobs?${new URLSearchParams({ ...(status ? { status } : {}), page: String(page), size: String(size) })}`),
+  settings: () => apiRequest<JobRecordSettings>('/api/scrape-jobs/settings'),
+  saveSettings: (retentionDays: number) => apiRequest<JobRecordSettings>('/api/scrape-jobs/settings', { method: 'PUT', body: { retention_days: retentionDays } }),
   get: (id: number) => apiRequest<ScrapeJob>(`/api/scrape-jobs/${id}`),
   operations: (id: number) => apiRequest<ScrapeJobOperation[]>(`/api/scrape-jobs/${id}/operations`),
   submit: (targetId: number, body: { preview_id: number; rename_media: boolean; confirm_directory_fingerprint: string }, key: string) => apiRequest<ScrapeJob>(`/api/scrape-targets/${targetId}/jobs`, { method: 'POST', headers: { 'Idempotency-Key': key }, body }),
@@ -70,4 +72,7 @@ export const logApi = {
   api: (query = '') => apiRequest<Page<APIRequestLog>>(`/api/admin/logs${query ? `?${query}` : ''}`),
   application: (query = '') => apiRequest<Page<ApplicationLog>>(`/api/admin/application-logs${query ? `?${query}` : ''}`),
   audit: (query = '') => apiRequest<Page<AuditLog>>(`/api/admin/audit-logs${query ? `?${query}` : ''}`),
+  settings: () => apiRequest<LogSettings>('/api/admin/logs/settings'),
+  saveSettings: (retentionDays: number) => apiRequest<LogSettings>('/api/admin/logs/settings', { method: 'PUT', body: { retention_days: retentionDays } }),
+  clear: (type: LogType) => apiRequest<LogCleanupStats>(`/api/admin/logs/${type}`, { method: 'DELETE' }),
 }

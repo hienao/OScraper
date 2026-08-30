@@ -11,6 +11,7 @@ import (
 	"net/url"
 	pathpkg "path"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -193,7 +194,7 @@ func (c *Client) TestConnection(ctx context.Context, rawBaseURL, token string) (
 
 func NormalizeRemotePath(raw string) (string, error) {
 	value := strings.TrimSpace(raw)
-	if value == "" || !strings.HasPrefix(value, "/") || strings.Contains(value, "\\") || strings.ContainsRune(value, 0) {
+	if value == "" || !strings.HasPrefix(value, "/") || strings.ContainsRune(value, 0) {
 		return "", &APIError{Code: "target.invalid_path", Message: "OpenList path must be an absolute path"}
 	}
 	for _, character := range value {
@@ -276,8 +277,8 @@ func (c *Client) ListDirectory(ctx context.Context, rawBaseURL, token, remotePat
 	}
 	entries := make([]DirectoryEntry, 0, len(payload.Data.Content))
 	for _, item := range payload.Data.Content {
-		if !validEntryName(item.Name) {
-			return nil, &APIError{Code: "openlist.invalid_response", Message: "OpenList returned an unsafe directory entry name"}
+		if reason := invalidEntryNameReason(item.Name); reason != "" {
+			return nil, &APIError{Code: "openlist.invalid_response", Message: fmt.Sprintf("OpenList returned an unsafe directory entry name %s: %s", quotedEntryName(item.Name), reason)}
 		}
 		entries = append(entries, DirectoryEntry{
 			Name: item.Name, Path: joinRemotePath(normalizedPath, item.Name), IsDir: item.IsDir,
@@ -294,15 +295,33 @@ func (c *Client) ListDirectory(ctx context.Context, rawBaseURL, token, remotePat
 }
 
 func validEntryName(name string) bool {
-	if name == "" || name == "." || name == ".." || strings.ContainsAny(name, "/\\") {
-		return false
+	return invalidEntryNameReason(name) == ""
+}
+
+func invalidEntryNameReason(name string) string {
+	if name == "" {
+		return "the name is empty"
+	}
+	if name == "." || name == ".." {
+		return "dot segments are not allowed"
+	}
+	if strings.ContainsRune(name, '/') {
+		return "the name contains a path separator"
 	}
 	for _, character := range name {
 		if character == 0 || character < 32 || character == 127 {
-			return false
+			return "the name contains control characters"
 		}
 	}
-	return true
+	return ""
+}
+
+func quotedEntryName(name string) string {
+	runes := []rune(name)
+	if len(runes) > 120 {
+		name = string(runes[:120]) + "…"
+	}
+	return strconv.Quote(name)
 }
 
 func joinRemotePath(parent, name string) string {

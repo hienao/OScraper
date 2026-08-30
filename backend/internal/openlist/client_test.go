@@ -7,6 +7,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -121,6 +122,27 @@ func TestListDirectoryRejectsUnsafeEntryNames(t *testing.T) {
 	_, err := NewClient(time.Second).ListDirectory(context.Background(), server.URL, "token", "/media", false)
 	if err == nil {
 		t.Fatal("expected unsafe entry name to be rejected")
+	}
+	if !strings.Contains(err.Error(), strconv.Quote("../escape")) || !strings.Contains(err.Error(), "path separator") {
+		t.Fatalf("unsafe entry error did not identify the offending name: %v", err)
+	}
+}
+
+func TestListDirectoryAllowsBackslashAsLiteralNameCharacter(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		writer.Header().Set("Content-Type", "application/json")
+		_, _ = writer.Write([]byte(`{"code":200,"data":{"content":[{"name":"Movie\\Part","is_dir":true}]}}`))
+	}))
+	defer server.Close()
+	entries, err := NewClient(time.Second).ListDirectory(context.Background(), server.URL, "token", "/media", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 || entries[0].Name != `Movie\Part` || entries[0].Path != `/media/Movie\Part` {
+		t.Fatalf("unexpected literal backslash entry: %#v", entries)
+	}
+	if normalized, err := NormalizeRemotePath(entries[0].Path); err != nil || normalized != entries[0].Path {
+		t.Fatalf("literal backslash path was not reusable: %q %v", normalized, err)
 	}
 }
 

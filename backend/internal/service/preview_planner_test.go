@@ -54,3 +54,23 @@ func TestMoviePlanDetectsExistingDestination(t *testing.T) {
 		t.Fatalf("existing target was not blocked: %#v", plan)
 	}
 }
+
+func TestFlatMoviePlanMigratesExistingScrapeMarker(t *testing.T) {
+	target := &model.ScrapeTarget{RootPath: "/movies", LibraryType: "movie", RenameEnabled: true}
+	candidate := &model.MediaCandidate{Path: "/movies/Arrival.mkv", Kind: "movie", RepresentativeFile: "Arrival.mkv", Scraped: true}
+	video := openlist.DirectoryEntry{Name: "Arrival.mkv", Path: candidate.Path}
+	marker := openlist.DirectoryEntry{Name: "Arrival.mkv" + scrapeMarkerSuffix, Path: candidate.Path + scrapeMarkerSuffix, Size: int64(len(scrapeMarkerContent))}
+	plan := buildFullPreviewPlan(target, candidate, &tmdb.Detail{ID: 329865, Title: "Arrival", Year: 2016}, []openlist.DirectoryEntry{video, marker}, []openlist.DirectoryEntry{video, marker})
+	if !plan.Ready || plan.ScrapeMarkerPath != "/movies/Arrival (2016) {tmdbid-329865}/"+scrapeMarkerName {
+		t.Fatalf("unexpected marker plan: %#v", plan)
+	}
+	found := false
+	for _, rename := range plan.ProposedFileRenames {
+		if rename.SourcePath == marker.Path && rename.TargetPath == plan.ScrapeMarkerPath && rename.AssetType == "marker" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("flat scrape marker was not migrated: %#v", plan.ProposedFileRenames)
+	}
+}

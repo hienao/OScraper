@@ -6,6 +6,7 @@ import (
 
 	"oscraper/internal/logging"
 	"oscraper/internal/model"
+	"oscraper/internal/service"
 	"oscraper/pkg/response"
 
 	"github.com/gin-gonic/gin"
@@ -15,6 +16,7 @@ import (
 type LogHandler struct {
 	manager    *logging.Manager
 	businessDB *gorm.DB
+	service    *service.LogService
 }
 
 type logPage struct {
@@ -24,8 +26,43 @@ type logPage struct {
 	Size  int         `json:"size"`
 }
 
-func NewLogHandler(manager *logging.Manager, businessDB *gorm.DB) *LogHandler {
-	return &LogHandler{manager: manager, businessDB: businessDB}
+func NewLogHandler(manager *logging.Manager, businessDB *gorm.DB, logService *service.LogService) *LogHandler {
+	return &LogHandler{manager: manager, businessDB: businessDB, service: logService}
+}
+
+type logSettingsRequest struct {
+	RetentionDays int `json:"retention_days" binding:"required,min=1,max=30"`
+}
+
+func (h *LogHandler) Settings(c *gin.Context) {
+	settings, err := h.service.Settings()
+	if err != nil {
+		respondError(c, err)
+		return
+	}
+	response.Success(c, settings)
+}
+
+func (h *LogHandler) SaveSettings(c *gin.Context) {
+	var request logSettingsRequest
+	if !bindJSON(c, &request) {
+		return
+	}
+	settings, err := h.service.SaveSettings(c.Request.Context(), currentUserID(c), request.RetentionDays)
+	if err != nil {
+		respondError(c, err)
+		return
+	}
+	response.Success(c, settings)
+}
+
+func (h *LogHandler) Clear(c *gin.Context) {
+	stats, err := h.service.Clear(c.Request.Context(), currentUserID(c), strings.TrimSpace(c.Param("type")))
+	if err != nil {
+		respondError(c, err)
+		return
+	}
+	response.Success(c, stats)
 }
 
 func (h *LogHandler) API(c *gin.Context) {

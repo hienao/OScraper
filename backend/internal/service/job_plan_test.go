@@ -16,13 +16,13 @@ func TestJobPlanKeepsSourcesValidUntilRootRename(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(operations) != 4 {
+	if len(operations) != 5 {
 		t.Fatalf("unexpected operations: %#v", operations)
 	}
 	if operations[0].SourcePath != "/tv/Show/S1" || operations[0].TargetPath != "/tv/Show/Season 01" {
 		t.Fatalf("season directory was not normalized under the current root first: %#v", operations)
 	}
-	if operations[1].SourcePath != "/tv/Show/Season 01/raw.S01E01.mkv" || operations[2].SourcePath != "/tv/Show" || operations[3].Type != "upload" {
+	if operations[1].SourcePath != "/tv/Show/Season 01/raw.S01E01.mkv" || operations[2].SourcePath != "/tv/Show" || operations[3].Type != "upload" || operations[4].Type != "marker" {
 		t.Fatalf("root rename ordering is unsafe: %#v", operations)
 	}
 }
@@ -38,7 +38,7 @@ func TestFlatMovieJobPlanMovesThenRenames(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(operations) != 4 || operations[0].Type != "mkdir" || operations[1].Type != "move" || operations[2].Type != "rename" || operations[3].Type != "upload" {
+	if len(operations) != 5 || operations[0].Type != "mkdir" || operations[1].Type != "move" || operations[2].Type != "rename" || operations[3].Type != "upload" || operations[4].Type != "marker" {
 		t.Fatalf("unexpected flat movie operations: %#v", operations)
 	}
 }

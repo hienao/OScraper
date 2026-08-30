@@ -6,7 +6,7 @@
 
 1. 从 `.env.example` 复制 `.env`，生成独立的 `JWT_SECRET` 与 32 字节 `CREDENTIAL_ENCRYPTION_KEY`。加密密钥一旦更换，已有 OpenList Token 和 TMDB Key 将无法解密。
 2. 应用仅支持 SQLite 和单实例部署；不要让多个应用容器同时挂载或访问同一个 SQLite 文件。
-3. `/data` 保存业务数据库和作业工作区，`/cache` 保存可清理的 API/应用日志。审计日志位于业务数据库，不随日志保留期删除。
+3. `/data` 保存业务数据库和作业工作区，`/cache` 保存 API/应用日志。日志页配置的保留期会同时清理 API、应用和审计日志；审计日志位于业务数据库。
 4. OpenList Token 至少需要目标目录的读取、创建目录、移动、重命名和上传权限。建议使用只覆盖媒体库根目录的专用账号。
 5. Linux/NAS 部署请执行 `id 运行用户`，将 UID 和主 GID 配置为 `PUID`、`PGID`。若媒体目录由另一个组授权，再将该组 ID 配置为 `MEDIA_GID`。容器只会自动初始化 `/data`、`/cache` 的所有权，不会修改 `/media`。
 6. 本地刮削通过 `HOST_MEDIA_DIR` 挂载到容器 `/media`；扫描需要运行 UID 及其主组/附加组具备读取权限，重命名和元数据写入还需要写入权限。本地目标不跟随符号链接。
@@ -24,9 +24,9 @@
 | `SCAN_WORKERS` | 1 | 目录扫描并发数，允许 1–4；与写作业 Worker 隔离 |
 | `SCAN_QUEUE_SIZE` | 20 | 等待与运行扫描的有界容量 |
 | `MAX_IMAGE_BYTES` | 20971520 | 单张图片上限，允许 1–100 MiB |
-| `JOB_RETENTION_DAYS` | 7 | 遗留作业工作区保留天数 |
-| `LOG_RETENTION_DAYS` | 7 | API 与应用日志保留天数，允许 1–30 |
-| `DATA_RETENTION_DAYS` | 30 | 终态作业、过期预览、无引用候选项及扫描记录保留天数；审计日志不删除 |
+| `JOB_RETENTION_DAYS` | 7 | 首次运行时作业记录及遗留作业工作区的默认保留天数，允许 1–30；之后可在作业页修改记录保留期（不影响工作区保留期） |
+| `LOG_RETENTION_DAYS` | 7 | 首次运行时 API、应用和审计日志的默认保留天数，允许 1–30；之后可在日志页修改 |
+| `DATA_RETENTION_DAYS` | 30 | 无引用候选项及扫描记录保留天数；预览仍按自身过期时间清理 |
 
 本地目录示例：
 

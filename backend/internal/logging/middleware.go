@@ -26,7 +26,7 @@ func AccessLogMiddleware(manager *Manager) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		started := time.Now()
 		c.Next()
-		if strings.HasPrefix(c.Request.URL.Path, "/api/admin/logs") || strings.HasPrefix(c.Request.URL.Path, "/swagger") {
+		if isLogManagementPath(c.Request.URL.Path) || strings.HasPrefix(c.Request.URL.Path, "/swagger") {
 			return
 		}
 		route := c.FullPath()
@@ -43,6 +43,10 @@ func AccessLogMiddleware(manager *Manager) gin.HandlerFunc {
 			ErrorCode: contextString(c, "error_code"), ErrorMessage: truncate(contextString(c, "error_message"), 1000),
 		})
 	}
+}
+
+func isLogManagementPath(value string) bool {
+	return strings.HasPrefix(value, "/api/admin/logs") || value == "/api/admin/application-logs" || value == "/api/admin/audit-logs"
 }
 
 func contextString(c *gin.Context, key string) string {

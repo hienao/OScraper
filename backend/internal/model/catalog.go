@@ -9,6 +9,7 @@ type ScanRun struct {
 	Refresh        bool       `gorm:"not null;default:false" json:"refresh"`
 	Status         string     `gorm:"size:20;index;not null" json:"status"`
 	CandidateCount int        `gorm:"not null;default:0" json:"candidate_count"`
+	ScrapedCount   int        `gorm:"not null;default:0" json:"scraped_candidate_count"`
 	VideoCount     int        `gorm:"not null;default:0" json:"video_count"`
 	ErrorCode      string     `gorm:"size:100" json:"error_code,omitempty"`
 	ErrorMessage   string     `gorm:"type:text" json:"error_message,omitempty"`
@@ -35,6 +36,7 @@ type MediaCandidate struct {
 	TMDBID             *int      `json:"tmdb_id,omitempty"`
 	Confidence         int       `gorm:"not null;default:0" json:"confidence"`
 	VideoCount         int       `gorm:"not null;default:0" json:"video_count"`
+	Scraped            bool      `gorm:"not null;default:false;index" json:"scraped"`
 	Status             string    `gorm:"size:20;index;not null" json:"status"`
 	CreatedAt          time.Time `json:"created_at"`
 }

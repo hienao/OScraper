@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -66,6 +67,36 @@ func TestLocalMovieScanUsesMountedDirectory(t *testing.T) {
 	}
 }
 
+func TestLocalScanReportsMissingDirectoryClearly(t *testing.T) {
+	root := t.TempDir()
+	library := filepath.Join(root, "removed-library")
+	db, err := gorm.Open(sqlite.Open(fmt.Sprintf("file:missing-local-catalog-%s?mode=memory&cache=shared", t.Name())), &gorm.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.AutoMigrate(&model.ScrapeTarget{}, &model.ScanRun{}, &model.MediaCandidate{}, &model.AdminAuditLog{}); err != nil {
+		t.Fatal(err)
+	}
+	target := model.ScrapeTarget{SourceType: "local", Name: "Removed library", RootPath: filepath.ToSlash(library), LibraryType: "movie", Enabled: true}
+	if err := db.Create(&target).Error; err != nil {
+		t.Fatal(err)
+	}
+	cipher, _ := cryptoutil.New("0123456789abcdef0123456789abcdef")
+	service := NewCatalogServiceWithLocalRoot(db, cipher, catalogBrowser{levels: map[string][]openlist.DirectoryEntry{}}, nil, root)
+	_, scanErr := service.Scan(context.Background(), target.ID, 1, false)
+	var serviceErr *Error
+	if !errors.As(scanErr, &serviceErr) || serviceErr.Code != "local.path_unavailable" || serviceErr.Message != "The directory does not exist. Please select a directory again" {
+		t.Fatalf("unexpected missing directory error: %#v", scanErr)
+	}
+	var scan model.ScanRun
+	if err := db.First(&scan).Error; err != nil {
+		t.Fatal(err)
+	}
+	if scan.Status != "failed" || scan.ErrorCode != "local.path_unavailable" || scan.ErrorMessage != serviceErr.Message {
+		t.Fatalf("unexpected stored scan failure: %#v", scan)
+	}
+}
+
 func (b catalogBrowser) ListDirectory(_ context.Context, _, _, remotePath string, _ bool) ([]openlist.DirectoryEntry, error) {
 	entries, ok := b.levels[remotePath]
 	if !ok {
@@ -109,17 +140,19 @@ func TestMovieScanFindsFoldersAndFlatVideos(t *testing.T) {
 		"/media/library": {
 			{Name: "Arrival (2016)", Path: "/media/library/Arrival (2016)", IsDir: true},
 			{Name: "Inception.2010.mkv", Path: "/media/library/Inception.2010.mkv", Size: 100},
+			{Name: "Inception.2010.mkv" + scrapeMarkerSuffix, Path: "/media/library/Inception.2010.mkv" + scrapeMarkerSuffix, Size: int64(len(scrapeMarkerContent))},
 			{Name: "poster.jpg", Path: "/media/library/poster.jpg", Size: 20},
 		},
 		"/media/library/Arrival (2016)": {
 			{Name: "Arrival.mkv", Path: "/media/library/Arrival (2016)/Arrival.mkv", Size: 200, Modified: "2026-01-01"},
+			{Name: scrapeMarkerName, Path: "/media/library/Arrival (2016)/" + scrapeMarkerName, Size: int64(len(scrapeMarkerContent))},
 		},
 	})
 	result, err := service.Scan(context.Background(), 1, 1, false)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result.Status != "succeeded" || result.CandidateCount != 2 || result.VideoCount != 2 {
+	if result.Status != "succeeded" || result.CandidateCount != 2 || result.ScrapedCount != 2 || result.VideoCount != 2 {
 		t.Fatalf("unexpected scan: %#v", result.ScanRun)
 	}
 	if result.Candidates[0].ParsedTitle != "Arrival" || result.Candidates[0].Year == nil || *result.Candidates[0].Year != 2016 {
@@ -128,8 +161,23 @@ func TestMovieScanFindsFoldersAndFlatVideos(t *testing.T) {
 	if result.Candidates[1].ParsedTitle != "Inception" || result.Candidates[1].Year == nil || *result.Candidates[1].Year != 2010 {
 		t.Fatalf("unexpected flat candidate: %#v", result.Candidates[1])
 	}
+	if !result.Candidates[0].Scraped || !result.Candidates[1].Scraped {
+		t.Fatalf("scrape markers were not detected: %#v", result.Candidates)
+	}
 	if result.Candidates[0].Fingerprint[:7] != "sha256:" {
 		t.Fatalf("unexpected fingerprint: %s", result.Candidates[0].Fingerprint)
+	}
+}
+
+func TestScrapeMarkersDoNotChangeCandidateFingerprint(t *testing.T) {
+	video := openlist.DirectoryEntry{Name: "Arrival.mkv", Path: "/media/library/Arrival/Arrival.mkv", Size: 100, Modified: "v1"}
+	marker := openlist.DirectoryEntry{Name: scrapeMarkerName, Path: "/media/library/Arrival/" + scrapeMarkerName, Size: int64(len(scrapeMarkerContent)), Modified: "v1"}
+	first := fingerprint([]openlist.DirectoryEntry{video, marker})
+	marker.Modified = "v2"
+	marker.Size = 999
+	second := fingerprint([]openlist.DirectoryEntry{video, marker})
+	if first != second {
+		t.Fatalf("scrape marker changed candidate fingerprint: %s != %s", first, second)
 	}
 }
 

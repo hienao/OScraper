@@ -10,10 +10,39 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-type JobHandler struct{ service *service.JobService }
+type JobHandler struct {
+	service  *service.JobService
+	settings *service.JobRecordSettingsService
+}
 
-func NewJobHandler(jobService *service.JobService) *JobHandler {
-	return &JobHandler{service: jobService}
+func NewJobHandler(jobService *service.JobService, settings *service.JobRecordSettingsService) *JobHandler {
+	return &JobHandler{service: jobService, settings: settings}
+}
+
+type jobRecordSettingsRequest struct {
+	RetentionDays int `json:"retention_days" binding:"required,min=1,max=30"`
+}
+
+func (h *JobHandler) Settings(c *gin.Context) {
+	settings, err := h.settings.Settings()
+	if err != nil {
+		respondError(c, err)
+		return
+	}
+	response.Success(c, settings)
+}
+
+func (h *JobHandler) SaveSettings(c *gin.Context) {
+	var request jobRecordSettingsRequest
+	if !bindJSON(c, &request) {
+		return
+	}
+	settings, err := h.settings.Save(c.Request.Context(), currentUserID(c), request.RetentionDays)
+	if err != nil {
+		respondError(c, err)
+		return
+	}
+	response.Success(c, settings)
 }
 
 func (h *JobHandler) Submit(c *gin.Context) {
