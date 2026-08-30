@@ -37,6 +37,11 @@ type OpenListMutator interface {
 
 var errOperationSkipped = errors.New("operation already applied")
 
+const (
+	imageDownloadAttempts = 3
+	imageRetryBaseDelay   = 100 * time.Millisecond
+)
+
 type SubmitJobCommand struct {
 	PreviewID                   uint
 	RenameMedia                 bool
@@ -433,11 +438,15 @@ func (s *JobExecutor) Execute(ctx context.Context, jobID uint) {
 	}
 
 	s.updateStage(job, "generating", 60, "Preparing immutable metadata artifacts")
-	if err := s.prepareArtifacts(ctx, job, plan, operations); err != nil {
+	if err := s.prepareArtifacts(ctx, job, source, plan, operations); err != nil {
 		s.failFromError(job, err)
 		return
 	}
-	operations, _ = s.jobs.Operations(job.ID)
+	operations, err = s.jobs.Operations(job.ID)
+	if err != nil {
+		s.fail(job, "job.operation_list_failed", "Failed to load scrape operations", err)
+		return
+	}
 	s.updateStage(job, "uploading", 70, "Uploading metadata artifacts")
 	for index := range operations {
 		if operations[index].Type != "upload" || operations[index].Status == "succeeded" || operations[index].Status == "skipped" {
@@ -451,7 +460,12 @@ func (s *JobExecutor) Execute(ctx context.Context, jobID uint) {
 	}
 
 	s.updateStage(job, "verifying", 95, "Verifying final storage paths")
-	if err := s.verify(ctx, source, plan); err != nil {
+	operations, err = s.jobs.Operations(job.ID)
+	if err != nil {
+		s.fail(job, "job.operation_list_failed", "Failed to load scrape operations", err)
+		return
+	}
+	if err := s.verify(ctx, source, plan, operations); err != nil {
 		s.failFromError(job, err)
 		return
 	}
@@ -548,6 +562,12 @@ func (s *JobExecutor) completeOperation(operation *model.ScrapeJobOperation, sta
 	return s.jobs.SaveOperation(operation)
 }
 
+func (s *JobExecutor) skipOperation(operation *model.ScrapeJobOperation, reason string) error {
+	now := time.Now().UTC()
+	operation.Status, operation.CompletedAt, operation.LastError = "skipped", &now, reason
+	return s.jobs.SaveOperation(operation)
+}
+
 func (s *JobExecutor) entryState(ctx context.Context, source *jobSource, remotePath string) (bool, bool, error) {
 	if source.local != nil {
 		return source.local.EntryState(remotePath)
@@ -567,7 +587,7 @@ func (s *JobExecutor) entryState(ctx context.Context, source *jobSource, remoteP
 	return false, false, nil
 }
 
-func (s *JobExecutor) prepareArtifacts(ctx context.Context, job *model.ScrapeJob, plan PreviewPlan, operations []model.ScrapeJobOperation) error {
+func (s *JobExecutor) prepareArtifacts(ctx context.Context, job *model.ScrapeJob, source *jobSource, plan PreviewPlan, operations []model.ScrapeJobOperation) error {
 	workspace := s.jobWorkspace(job.ID)
 	if err := os.MkdirAll(workspace, 0o750); err != nil {
 		return Internal("job.workspace_failed", "Failed to prepare job workspace", err)
@@ -575,6 +595,13 @@ func (s *JobExecutor) prepareArtifacts(ctx context.Context, job *model.ScrapeJob
 	for index := range operations {
 		operation := &operations[index]
 		if operation.Type != "upload" || operation.Status == "succeeded" || operation.Status == "skipped" {
+			continue
+		}
+		skipped, err := s.skipExistingUpload(ctx, source, operation)
+		if err != nil {
+			return err
+		}
+		if skipped {
 			continue
 		}
 		artifactIndex := operation.Artifact - 1
@@ -592,7 +619,17 @@ func (s *JobExecutor) prepareArtifacts(ctx context.Context, job *model.ScrapeJob
 			var err error
 			contentType, err = s.downloadImage(ctx, artifact.SourceURL, localPath)
 			if err != nil {
-				return err
+				if !shouldSkipImageArtifact(err) {
+					return err
+				}
+				reason := safeErrorMessage(err)
+				if saveErr := s.skipOperation(operation, reason); saveErr != nil {
+					return Internal("job.checkpoint_failed", "Failed to save skipped image checkpoint", saveErr)
+				}
+				logging.Warn("job", "TMDB image skipped after download failure", logging.Fields{
+					"job_id": job.ID, "target_id": job.TargetID, "artifact_kind": artifact.Kind, "error": err,
+				})
+				continue
 			}
 		}
 		operation.LocalPath, operation.ContentType = localPath, contentType
@@ -604,6 +641,33 @@ func (s *JobExecutor) prepareArtifacts(ctx context.Context, job *model.ScrapeJob
 }
 
 func (s *JobExecutor) downloadImage(ctx context.Context, rawURL, destination string) (string, error) {
+	var lastErr error
+	for attempt := 1; attempt <= imageDownloadAttempts; attempt++ {
+		contentType, err := s.downloadImageOnce(ctx, rawURL, destination)
+		if err == nil {
+			return contentType, nil
+		}
+		lastErr = err
+		if !isRetryableImageDownloadError(err) || attempt == imageDownloadAttempts {
+			return "", err
+		}
+		timer := time.NewTimer(time.Duration(attempt) * imageRetryBaseDelay)
+		select {
+		case <-ctx.Done():
+			if !timer.Stop() {
+				select {
+				case <-timer.C:
+				default:
+				}
+			}
+			return "", ctx.Err()
+		case <-timer.C:
+		}
+	}
+	return "", lastErr
+}
+
+func (s *JobExecutor) downloadImageOnce(ctx context.Context, rawURL, destination string) (string, error) {
 	parsed, err := url.Parse(rawURL)
 	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
 		return "", BadRequest("job.invalid_image_url", "TMDB image URL is invalid")
@@ -664,7 +728,49 @@ func (s *JobExecutor) downloadImage(ctx context.Context, rawURL, destination str
 	return contentType, nil
 }
 
+func isRetryableImageDownloadError(err error) bool {
+	var serviceError *Error
+	return errors.As(err, &serviceError) && serviceError.Code == "job.image_download_failed"
+}
+
+func shouldSkipImageArtifact(err error) bool {
+	var serviceError *Error
+	if !errors.As(err, &serviceError) {
+		return false
+	}
+	switch serviceError.Code {
+	case "job.image_download_failed", "job.invalid_image_url", "job.invalid_image_type", "job.image_too_large":
+		return true
+	default:
+		return false
+	}
+}
+
+func (s *JobExecutor) skipExistingUpload(ctx context.Context, source *jobSource, operation *model.ScrapeJobOperation) (bool, error) {
+	exists, isDir, err := s.entryState(ctx, source, operation.TargetPath)
+	if err != nil {
+		return false, err
+	}
+	if !exists {
+		return false, nil
+	}
+	if isDir {
+		return false, Conflict("job.target_exists", "A directory occupies the metadata path")
+	}
+	if err := s.completeOperation(operation, "skipped"); err != nil {
+		return false, Internal("job.checkpoint_failed", "Failed to save skipped upload checkpoint", err)
+	}
+	return true, nil
+}
+
 func (s *JobExecutor) executeUpload(ctx context.Context, source *jobSource, operation *model.ScrapeJobOperation) error {
+	skipped, err := s.skipExistingUpload(ctx, source, operation)
+	if err != nil {
+		return err
+	}
+	if skipped {
+		return nil
+	}
 	now := time.Now().UTC()
 	operation.Status, operation.Attempts, operation.StartedAt = "running", operation.Attempts+1, &now
 	if err := s.jobs.SaveOperation(operation); err != nil {
@@ -694,8 +800,15 @@ func (s *JobExecutor) executeUpload(ctx context.Context, source *jobSource, oper
 	return s.completeOperation(operation, "succeeded")
 }
 
-func (s *JobExecutor) verify(ctx context.Context, source *jobSource, plan PreviewPlan) error {
+func (s *JobExecutor) verify(ctx context.Context, source *jobSource, plan PreviewPlan, operations []model.ScrapeJobOperation) error {
 	expected := make([]string, 0, len(plan.ProposedFileRenames)+len(plan.Artifacts)+1)
+	skippedImages := make(map[string]struct{})
+	for index := range operations {
+		operation := operations[index]
+		if operation.Type == "upload" && operation.Status == "skipped" && operation.LastError != "" {
+			skippedImages[operation.TargetPath] = struct{}{}
+		}
+	}
 	if plan.ProposedDirectoryPath != "" && plan.ProposedDirectoryPath != path.Dir(plan.SourcePath) {
 		expected = append(expected, plan.ProposedDirectoryPath)
 	}
@@ -703,6 +816,9 @@ func (s *JobExecutor) verify(ctx context.Context, source *jobSource, plan Previe
 		expected = append(expected, rename.TargetPath)
 	}
 	for _, artifact := range plan.Artifacts {
+		if _, skipped := skippedImages[artifact.Path]; skipped {
+			continue
+		}
 		expected = append(expected, artifact.Path)
 	}
 	for _, remotePath := range expected {
