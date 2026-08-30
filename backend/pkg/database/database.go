@@ -55,6 +55,9 @@ func applyMigrations(db *gorm.DB) error {
 		{version: 3, name: "asynchronous_scan_runtime", apply: func(tx *gorm.DB) error {
 			return tx.AutoMigrate(&model.ScanRun{})
 		}},
+		{version: 4, name: "scraped_media_markers", apply: func(tx *gorm.DB) error {
+			return tx.AutoMigrate(&model.ScanRun{}, &model.MediaCandidate{})
+		}},
 	}
 	for _, migration := range migrations {
 		var count int64

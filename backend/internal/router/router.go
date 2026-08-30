@@ -25,6 +25,8 @@ type Dependencies struct {
 	Settings    *service.SettingService
 	Previews    *service.PreviewService
 	Jobs        *service.JobService
+	JobRecords  *service.JobRecordSettingsService
+	Logs        *service.LogService
 	Health      HealthProvider
 }
 
@@ -39,8 +41,8 @@ func New(cfg *config.Config, db *gorm.DB, logManager *logging.Manager, dependenc
 	catalogHandler := handler.NewCatalogHandler(dependencies.Catalog)
 	settingHandler := handler.NewSettingHandler(dependencies.Settings)
 	previewHandler := handler.NewPreviewHandler(dependencies.Previews)
-	jobHandler := handler.NewJobHandler(dependencies.Jobs)
-	logHandler := handler.NewLogHandler(logManager, db)
+	jobHandler := handler.NewJobHandler(dependencies.Jobs, dependencies.JobRecords)
+	logHandler := handler.NewLogHandler(logManager, db, dependencies.Logs)
 
 	health := func(c *gin.Context) {
 		if dependencies.Health == nil {
@@ -114,6 +116,8 @@ func New(cfg *config.Config, db *gorm.DB, logManager *logging.Manager, dependenc
 		jobs := api.Group("/scrape-jobs", middleware.JWTAuth(cfg, db), middleware.AdminSetupComplete(), middleware.AdminOnly())
 		{
 			jobs.GET("", jobHandler.List)
+			jobs.GET("/settings", jobHandler.Settings)
+			jobs.PUT("/settings", jobHandler.SaveSettings)
 			jobs.GET("/:id", jobHandler.Get)
 			jobs.GET("/:id/operations", jobHandler.Operations)
 			jobs.POST("/:id/retry", jobHandler.Retry)
@@ -131,6 +135,9 @@ func New(cfg *config.Config, db *gorm.DB, logManager *logging.Manager, dependenc
 		admin := api.Group("/admin", middleware.JWTAuth(cfg, db), middleware.AdminSetupComplete(), middleware.AdminOnly())
 		{
 			admin.GET("/logs", logHandler.API)
+			admin.GET("/logs/settings", logHandler.Settings)
+			admin.PUT("/logs/settings", logHandler.SaveSettings)
+			admin.DELETE("/logs/:type", logHandler.Clear)
 			admin.GET("/application-logs", logHandler.Application)
 			admin.GET("/audit-logs", logHandler.Audit)
 		}

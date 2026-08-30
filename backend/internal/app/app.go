@@ -35,6 +35,8 @@ type App struct {
 	Jobs        *service.JobService
 	Catalog     *service.CatalogService
 	Maintenance *maintenance.Service
+	Logs        *service.LogService
+	JobRecords  *service.JobRecordSettingsService
 	targets     *service.TargetService
 	db          *gorm.DB
 	logs        *logging.Manager
@@ -68,17 +70,33 @@ func New(cfg *config.Config, db *gorm.DB, logs *logging.Manager, cipher *cryptou
 		_ = catalogService.Shutdown(context.Background())
 		return nil, err
 	}
-	maintenanceService := maintenance.New(db, cfg.DataRetentionDays)
-	if err := maintenanceService.Start(rootCtx); err != nil {
+	logService := service.NewLogService(logs, db, cfg.LogRetentionDays)
+	if err := logService.Start(rootCtx); err != nil {
 		cancel()
 		_ = jobService.Shutdown(context.Background())
 		_ = catalogService.Shutdown(context.Background())
 		return nil, err
 	}
-	application := &App{Jobs: jobService, Catalog: catalogService, Maintenance: maintenanceService, targets: targetService, db: db, logs: logs, cancel: cancel}
+	maintenanceService := maintenance.New(db, cfg.DataRetentionDays, cfg.JobRetentionDays)
+	jobRecordSettings := service.NewJobRecordSettingsService(db, maintenanceService, cfg.JobRetentionDays)
+	if err := jobRecordSettings.Initialize(); err != nil {
+		cancel()
+		_ = logService.Shutdown(context.Background())
+		_ = jobService.Shutdown(context.Background())
+		_ = catalogService.Shutdown(context.Background())
+		return nil, err
+	}
+	if err := maintenanceService.Start(rootCtx); err != nil {
+		cancel()
+		_ = logService.Shutdown(context.Background())
+		_ = jobService.Shutdown(context.Background())
+		_ = catalogService.Shutdown(context.Background())
+		return nil, err
+	}
+	application := &App{Jobs: jobService, Catalog: catalogService, Maintenance: maintenanceService, Logs: logService, JobRecords: jobRecordSettings, targets: targetService, db: db, logs: logs, cancel: cancel}
 	application.Engine = router.New(cfg, db, logs, router.Dependencies{
 		Auth: authService, Connections: connectionService, Targets: targetService, Catalog: catalogService,
-		Settings: settingService, Previews: previewService, Jobs: jobService, Health: application.Health,
+		Settings: settingService, Previews: previewService, Jobs: jobService, JobRecords: jobRecordSettings, Logs: logService, Health: application.Health,
 	})
 	return application, nil
 }
@@ -111,7 +129,7 @@ func (a *App) Health(ctx context.Context) (any, bool) {
 
 func (a *App) Shutdown(ctx context.Context) error {
 	a.cancel()
-	return errors.Join(a.Catalog.Shutdown(ctx), a.Jobs.Shutdown(ctx), a.Maintenance.Shutdown(ctx))
+	return errors.Join(a.Catalog.Shutdown(ctx), a.Jobs.Shutdown(ctx), a.Logs.Shutdown(ctx), a.Maintenance.Shutdown(ctx))
 }
 
 func ping(ctx context.Context, db *gorm.DB) bool {

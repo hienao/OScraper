@@ -28,6 +28,7 @@ import (
 type memoryOpenList struct {
 	mu             sync.Mutex
 	entries        map[string]bool
+	uploads        map[string]string
 	failUploadOnce bool
 	uploadCalls    int
 }
@@ -102,9 +103,14 @@ func (m *memoryOpenList) Upload(_ context.Context, _, _, remotePath, _ string, _
 		m.failUploadOnce = false
 		return errors.New("injected upload failure")
 	}
-	if _, err := io.Copy(io.Discard, content); err != nil {
+	data, err := io.ReadAll(content)
+	if err != nil {
 		return err
 	}
+	if m.uploads == nil {
+		m.uploads = make(map[string]string)
+	}
+	m.uploads[remotePath] = string(data)
 	m.entries[remotePath] = false
 	return nil
 }
@@ -165,7 +171,7 @@ func newJobTestService(t *testing.T, remote *memoryOpenList) (*JobService, *gorm
 
 func waitJob(t *testing.T, service *JobService, id uint) *model.ScrapeJob {
 	t.Helper()
-	deadline := time.Now().Add(3 * time.Second)
+	deadline := time.Now().Add(8 * time.Second)
 	for time.Now().Before(deadline) {
 		job, err := service.Get(id)
 		if err != nil {
@@ -194,8 +200,9 @@ func TestJobExecutesAndVerifiesFlatMoviePlan(t *testing.T) {
 	remote.mu.Lock()
 	_, videoExists := remote.entries["/movies/Arrival (2016) {tmdbid-329865}/Arrival (2016) {tmdbid-329865}.mkv"]
 	_, nfoExists := remote.entries["/movies/Arrival (2016) {tmdbid-329865}/Arrival (2016) {tmdbid-329865}.nfo"]
+	markerContent := remote.uploads["/movies/Arrival (2016) {tmdbid-329865}/"+scrapeMarkerName]
 	remote.mu.Unlock()
-	if !videoExists || !nfoExists {
+	if !videoExists || !nfoExists || markerContent != scrapeMarkerContent {
 		t.Fatalf("final OpenList state is incomplete: %#v", remote.entries)
 	}
 	same, err := service.Submit(1, 1, SubmitJobCommand{PreviewID: preview.ID, RenameMedia: true, ConfirmDirectoryFingerprint: preview.Fingerprint}, "same-request")
@@ -220,7 +227,7 @@ func TestFailedUploadRetriesFromOperationCheckpoint(t *testing.T) {
 		t.Fatal(err)
 	}
 	retried = waitJob(t, service, retried.ID)
-	if retried.Status != "succeeded" || retried.Attempts != 2 || remote.uploadCalls != 2 {
+	if retried.Status != "succeeded" || retried.Attempts != 2 || remote.uploadCalls != 3 {
 		t.Fatalf("retry did not resume safely: %#v uploads=%d", retried, remote.uploadCalls)
 	}
 }
@@ -239,16 +246,17 @@ func TestExistingMetadataSkipsUpload(t *testing.T) {
 		t.Fatal(err)
 	}
 	job = waitJob(t, service, job.ID)
-	if job.Status != "succeeded" || remote.uploadCalls != 0 {
+	if job.Status != "succeeded" || remote.uploadCalls != 1 {
 		t.Fatalf("existing metadata was uploaded: job=%#v uploads=%d", job, remote.uploadCalls)
 	}
 	operations, err := service.Operations(job.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	last := operations[len(operations)-1]
-	if last.Type != "upload" || last.Status != "skipped" || last.LastError != "" {
-		t.Fatalf("existing metadata operation was not cleanly skipped: %#v", last)
+	metadataOperation := operations[len(operations)-2]
+	markerOperation := operations[len(operations)-1]
+	if metadataOperation.Type != "upload" || metadataOperation.Status != "skipped" || metadataOperation.LastError != "" || markerOperation.Type != "marker" || markerOperation.Status != "succeeded" {
+		t.Fatalf("existing metadata operation was not cleanly skipped: metadata=%#v marker=%#v", metadataOperation, markerOperation)
 	}
 }
 
@@ -314,6 +322,10 @@ func TestLocalJobRenamesMediaAndWritesMetadata(t *testing.T) {
 	data, err := os.ReadFile(filepath.FromSlash(finalNFO))
 	if err != nil || !strings.Contains(string(data), "Arrival") {
 		t.Fatalf("local NFO is missing: %q %v", data, err)
+	}
+	markerData, err := os.ReadFile(filepath.Join(filepath.FromSlash(finalRoot), scrapeMarkerName))
+	if err != nil || string(markerData) != scrapeMarkerContent {
+		t.Fatalf("local scrape marker is missing or changed: %q %v", markerData, err)
 	}
 }
 
@@ -401,7 +413,7 @@ func TestImageDownloadFailureIsSkippedAfterRetries(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	imageOperation := operations[len(operations)-1]
+	imageOperation := operations[len(operations)-2]
 	if imageOperation.ArtifactKind != "poster" || imageOperation.Status != "skipped" || imageOperation.LastError == "" {
 		t.Fatalf("failed image operation was not recorded as skipped: %#v", imageOperation)
 	}

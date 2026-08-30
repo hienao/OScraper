@@ -26,6 +26,7 @@ type Manager struct {
 	queue              chan queuedLog
 	done               chan struct{}
 	wg                 sync.WaitGroup
+	flushMu            sync.Mutex
 	batchSize          int
 	apiDropped         atomic.Uint64
 	applicationDropped atomic.Uint64
@@ -53,17 +54,6 @@ func NewManager(cfg *config.Config) (*Manager, error) {
 		return nil, err
 	}
 	if err := db.AutoMigrate(&model.APIRequestLog{}, &model.ApplicationLog{}); err != nil {
-		return nil, err
-	}
-	retentionDays := cfg.LogRetentionDays
-	if retentionDays <= 0 {
-		retentionDays = 7
-	}
-	cutoff := time.Now().UTC().AddDate(0, 0, -retentionDays)
-	if err := db.Where("occurred_at < ?", cutoff).Delete(&model.APIRequestLog{}).Error; err != nil {
-		return nil, err
-	}
-	if err := db.Where("occurred_at < ?", cutoff).Delete(&model.ApplicationLog{}).Error; err != nil {
 		return nil, err
 	}
 	queueSize := cfg.APILogQueueSize
@@ -118,6 +108,8 @@ func (m *Manager) writeLoop() {
 }
 
 func (m *Manager) flush(max int) {
+	m.flushMu.Lock()
+	defer m.flushMu.Unlock()
 	apiEntries := make([]model.APIRequestLog, 0, m.batchSize)
 	applicationEntries := make([]model.ApplicationLog, 0, m.batchSize)
 	for count := 0; max == 0 || count < max; count++ {
@@ -136,6 +128,8 @@ func (m *Manager) flush(max int) {
 	}
 	m.persist(apiEntries, applicationEntries)
 }
+
+func (m *Manager) Flush() { m.flush(0) }
 
 func (m *Manager) persist(apiEntries []model.APIRequestLog, applicationEntries []model.ApplicationLog) {
 	if len(apiEntries) > 0 {

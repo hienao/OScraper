@@ -74,6 +74,11 @@ func buildJobOperations(plan PreviewPlan) ([]model.ScrapeJobOperation, error) {
 		}
 		appendOperation("upload", "", artifact.Path, index+1, artifact.Kind)
 	}
+	markerPath := markerPathForPlan(plan)
+	if markerPath == "" {
+		return nil, fmt.Errorf("invalid scrape marker path")
+	}
+	appendOperation("marker", "", markerPath, 0, "scrape_marker")
 	return operations, nil
 }
 

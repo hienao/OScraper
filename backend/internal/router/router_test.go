@@ -96,6 +96,23 @@ func TestAuthenticatedConnectionTargetAndScanFlow(t *testing.T) {
 	bootstrapToken := responseToken(t, bootstrap)
 	setup := requestJSON(t, server.URL, http.MethodPost, "/api/auth/setup-admin", bootstrapToken, map[string]any{"username": "owner", "password": "secure-password"}, http.StatusOK)
 	token := responseToken(t, setup)
+	logSettings := requestJSON(t, server.URL, http.MethodGet, "/api/admin/logs/settings", token, nil, http.StatusOK)
+	if days := responseData(t, logSettings)["retention_days"].(float64); days != 7 {
+		t.Fatalf("unexpected default log retention: %s", logSettings)
+	}
+	logSettings = requestJSON(t, server.URL, http.MethodPut, "/api/admin/logs/settings", token, map[string]any{"retention_days": 3}, http.StatusOK)
+	if days := responseData(t, logSettings)["retention_days"].(float64); days != 3 {
+		t.Fatalf("log retention was not saved: %s", logSettings)
+	}
+	requestJSON(t, server.URL, http.MethodDelete, "/api/admin/logs/api", token, nil, http.StatusOK)
+	jobSettings := requestJSON(t, server.URL, http.MethodGet, "/api/scrape-jobs/settings", token, nil, http.StatusOK)
+	if days := responseData(t, jobSettings)["retention_days"].(float64); days != 7 {
+		t.Fatalf("unexpected default job record retention: %s", jobSettings)
+	}
+	jobSettings = requestJSON(t, server.URL, http.MethodPut, "/api/scrape-jobs/settings", token, map[string]any{"retention_days": 5}, http.StatusOK)
+	if days := responseData(t, jobSettings)["retention_days"].(float64); days != 5 {
+		t.Fatalf("job record retention was not saved: %s", jobSettings)
+	}
 	jobs := requestJSON(t, server.URL, http.MethodGet, "/api/scrape-jobs", token, nil, http.StatusOK)
 	if total := responseData(t, jobs)["total"].(float64); total != 0 {
 		t.Fatalf("new database returned scrape jobs: %s", jobs)

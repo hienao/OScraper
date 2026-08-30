@@ -427,7 +427,7 @@ func (s *JobExecutor) Execute(ctx context.Context, jobID uint) {
 
 	s.updateStage(job, "renaming", 10, "Applying media rename plan")
 	for index := range operations {
-		if operations[index].Type == "upload" || operations[index].Status == "succeeded" || operations[index].Status == "skipped" {
+		if operations[index].Type == "upload" || operations[index].Type == "marker" || operations[index].Status == "succeeded" || operations[index].Status == "skipped" {
 			continue
 		}
 		if err := s.executeMutation(ctx, source, &operations[index]); err != nil {
@@ -468,6 +468,22 @@ func (s *JobExecutor) Execute(ctx context.Context, jobID uint) {
 	if err := s.verify(ctx, source, plan, operations); err != nil {
 		s.failFromError(job, err)
 		return
+	}
+
+	s.updateStage(job, "marking", 98, "Writing scrape marker")
+	for index := range operations {
+		if operations[index].Type != "marker" || operations[index].Status == "succeeded" {
+			continue
+		}
+		if err := s.executeMarker(ctx, source, &operations[index]); err != nil {
+			s.failOperation(job, &operations[index], err)
+			return
+		}
+		if err := s.verifyMarker(ctx, source, &operations[index]); err != nil {
+			s.failOperation(job, &operations[index], err)
+			return
+		}
+		s.checkpoint(job, &operations[index], 98, 99, len(operations))
 	}
 	now := time.Now().UTC()
 	job.Status, job.Stage, job.Progress, job.Message, job.CompletedAt = "succeeded", "completed", 100, "Scrape completed", &now
@@ -798,6 +814,47 @@ func (s *JobExecutor) executeUpload(ctx context.Context, source *jobSource, oper
 		}
 	}
 	return s.completeOperation(operation, "succeeded")
+}
+
+func (s *JobExecutor) executeMarker(ctx context.Context, source *jobSource, operation *model.ScrapeJobOperation) error {
+	exists, isDir, err := s.entryState(ctx, source, operation.TargetPath)
+	if err != nil {
+		return err
+	}
+	if exists && isDir {
+		return Conflict("job.target_exists", "A directory occupies the scrape marker path")
+	}
+	now := time.Now().UTC()
+	operation.Status, operation.Attempts, operation.StartedAt = "running", operation.Attempts+1, &now
+	operation.ContentType = scrapeMarkerContentType
+	if err := s.jobs.SaveOperation(operation); err != nil {
+		return Internal("job.checkpoint_failed", "Failed to save scrape marker checkpoint", err)
+	}
+	reader := strings.NewReader(scrapeMarkerContent)
+	if source.local != nil {
+		if err := source.local.PutMetadata(operation.TargetPath, int64(len(scrapeMarkerContent)), reader); err != nil {
+			return err
+		}
+	} else {
+		if err := s.quota.Wait(ctx, source.connection); err != nil {
+			return err
+		}
+		if err := s.client.Upload(ctx, source.connection.BaseURL, source.token, operation.TargetPath, scrapeMarkerContentType, int64(len(scrapeMarkerContent)), reader); err != nil {
+			return mapOpenListError(err)
+		}
+	}
+	return s.completeOperation(operation, "succeeded")
+}
+
+func (s *JobExecutor) verifyMarker(ctx context.Context, source *jobSource, operation *model.ScrapeJobOperation) error {
+	exists, isDir, err := s.entryState(ctx, source, operation.TargetPath)
+	if err != nil {
+		return err
+	}
+	if !exists || isDir {
+		return Conflict("job.marker_verification_failed", "Scrape marker is missing after execution")
+	}
+	return nil
 }
 
 func (s *JobExecutor) verify(ctx context.Context, source *jobSource, plan PreviewPlan, operations []model.ScrapeJobOperation) error {

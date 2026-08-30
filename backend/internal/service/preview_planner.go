@@ -49,6 +49,7 @@ func buildFullPreviewPlan(target *model.ScrapeTarget, candidate *model.MediaCand
 		ProposedDirectoryCreates: []string{}, ProposedDirectoryRenames: []RenameItem{},
 		ProposedFileRenames: []RenameItem{}, GeneratedFiles: []string{}, Artifacts: []PreviewArtifact{}, EpisodeFiles: []EpisodeFilePlan{}, Warnings: []string{}, Conflicts: []PlanConflict{},
 	}
+	plan.ScrapeMarkerPath = markerPathForPlan(plan)
 	planner := newRenamePlanner(&plan, entries, siblings)
 	if target.RenameEnabled {
 		if flatMovie {
@@ -118,6 +119,15 @@ func (p *renamePlanner) planMovie(candidate *model.MediaCandidate, entries, sibl
 		p.addRename(video.Path, targetVideo, "video")
 		p.planCompanions(video, assets, targetBase, finalRoot, claimedAssets)
 	}
+	if rename && media.IsVideoFile(path.Base(candidate.Path)) {
+		flatMarkerPath := candidate.Path + scrapeMarkerSuffix
+		for _, entry := range assets {
+			if !entry.IsDir && entry.Path == flatMarkerPath {
+				p.addRename(entry.Path, p.plan.ScrapeMarkerPath, "marker")
+				break
+			}
+		}
+	}
 }
 
 func (p *renamePlanner) planSeries(candidate *model.MediaCandidate, entries []openlist.DirectoryEntry, title, finalRoot string, rename bool) {
@@ -185,7 +195,7 @@ func (p *renamePlanner) planSeries(candidate *model.MediaCandidate, entries []op
 func (p *renamePlanner) planCompanions(video openlist.DirectoryEntry, entries []openlist.DirectoryEntry, targetBase, targetDirectory string, claimed map[string]struct{}) {
 	videoBase := strings.TrimSuffix(video.Name, path.Ext(video.Name))
 	for _, entry := range entries {
-		if entry.IsDir || entry.Path == video.Path || path.Dir(entry.Path) != path.Dir(video.Path) || media.IsVideoFile(entry.Name) {
+		if entry.IsDir || entry.Path == video.Path || path.Dir(entry.Path) != path.Dir(video.Path) || media.IsVideoFile(entry.Name) || isScrapeMarkerName(entry.Name) {
 			continue
 		}
 		key := strings.ToLower(entry.Path)

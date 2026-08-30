@@ -83,3 +83,35 @@ func TestRunDeletesOnlyExpiredUnreferencedOperationalData(t *testing.T) {
 		}
 	}
 }
+
+func TestRunUsesIndependentJobAndCatalogRetentionPeriods(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open("file:maintenance-retention?mode=memory&cache=shared"), &gorm.Config{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.AutoMigrate(&model.ScanRun{}, &model.MediaCandidate{}, &model.ScrapePreview{}, &model.ScrapeJob{}, &model.ScrapeJobOperation{}); err != nil {
+		t.Fatal(err)
+	}
+	old := time.Now().UTC().AddDate(0, 0, -10)
+	completed := model.ScrapeJob{TargetID: 1, PreviewID: 1, CandidateID: 1, ActorID: 1, SourceType: "local", SourceRoot: "/media", Status: "succeeded", Stage: "completed", CompletedAt: &old, CreatedAt: old}
+	active := model.ScrapeJob{TargetID: 2, PreviewID: 2, CandidateID: 2, ActorID: 1, SourceType: "local", SourceRoot: "/media", Status: "running", Stage: "uploading", CreatedAt: old}
+	if err := db.Create(&[]model.ScrapeJob{completed, active}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Create(&model.ScanRun{TargetID: 3, Status: "succeeded", StartedAt: &old, CompletedAt: &old, CreatedAt: old}).Error; err != nil {
+		t.Fatal(err)
+	}
+	stats, err := New(db, 30, 7).Run(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stats.Jobs != 1 || stats.Scans != 0 {
+		t.Fatalf("retention periods were not independent: %#v", stats)
+	}
+	var jobs, scans int64
+	_ = db.Model(&model.ScrapeJob{}).Count(&jobs).Error
+	_ = db.Model(&model.ScanRun{}).Count(&scans).Error
+	if jobs != 1 || scans != 1 {
+		t.Fatalf("unexpected retained records: jobs=%d scans=%d", jobs, scans)
+	}
+}

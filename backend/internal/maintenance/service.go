@@ -3,6 +3,7 @@ package maintenance
 import (
 	"context"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"oscraper/internal/logging"
@@ -29,19 +30,35 @@ type Status struct {
 }
 
 type Service struct {
-	db            *gorm.DB
-	retentionDays int
-	cancel        context.CancelFunc
-	wait          sync.WaitGroup
-	mu            sync.RWMutex
-	status        Status
+	db                *gorm.DB
+	dataRetentionDays int
+	jobRetentionDays  atomic.Int32
+	cancel            context.CancelFunc
+	wait              sync.WaitGroup
+	runMu             sync.Mutex
+	mu                sync.RWMutex
+	status            Status
 }
 
-func New(db *gorm.DB, retentionDays int) *Service {
-	if retentionDays < 1 {
-		retentionDays = 30
+func New(db *gorm.DB, dataRetentionDays int, jobRetentionDays ...int) *Service {
+	if dataRetentionDays < 1 {
+		dataRetentionDays = 30
 	}
-	return &Service{db: db, retentionDays: retentionDays}
+	jobDays := 7
+	if len(jobRetentionDays) > 0 && jobRetentionDays[0] >= 1 && jobRetentionDays[0] <= 30 {
+		jobDays = jobRetentionDays[0]
+	}
+	service := &Service{db: db, dataRetentionDays: dataRetentionDays}
+	service.jobRetentionDays.Store(int32(jobDays))
+	return service
+}
+
+func (s *Service) JobRetentionDays() int { return int(s.jobRetentionDays.Load()) }
+
+func (s *Service) SetJobRetentionDays(days int) {
+	if days >= 1 && days <= 30 {
+		s.jobRetentionDays.Store(int32(days))
+	}
 }
 
 func (s *Service) Start(parent context.Context) error {
@@ -93,19 +110,23 @@ func (s *Service) Status() Status {
 }
 
 func (s *Service) Run(ctx context.Context) (CleanupStats, error) {
+	s.runMu.Lock()
+	defer s.runMu.Unlock()
 	s.mu.Lock()
 	s.status.Running = true
 	s.mu.Unlock()
-	cutoff := time.Now().UTC().AddDate(0, 0, -s.retentionDays)
+	now := time.Now().UTC()
+	jobCutoff := now.AddDate(0, 0, -s.JobRetentionDays())
+	dataCutoff := now.AddDate(0, 0, -s.dataRetentionDays)
 	stats := CleanupStats{}
 	err := s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		terminalJobs := tx.Model(&model.ScrapeJob{}).Select("id").Where("status IN ? AND completed_at < ?", []string{"succeeded", "failed", "canceled"}, cutoff)
+		terminalJobs := tx.Model(&model.ScrapeJob{}).Select("id").Where("status IN ? AND completed_at < ?", []string{"succeeded", "failed", "canceled"}, jobCutoff)
 		result := tx.Where("job_id IN (?)", terminalJobs).Delete(&model.ScrapeJobOperation{})
 		if result.Error != nil {
 			return result.Error
 		}
 		stats.Operations = result.RowsAffected
-		result = tx.Where("status IN ? AND completed_at < ?", []string{"succeeded", "failed", "canceled"}, cutoff).Delete(&model.ScrapeJob{})
+		result = tx.Where("status IN ? AND completed_at < ?", []string{"succeeded", "failed", "canceled"}, jobCutoff).Delete(&model.ScrapeJob{})
 		if result.Error != nil {
 			return result.Error
 		}
@@ -117,20 +138,20 @@ func (s *Service) Run(ctx context.Context) (CleanupStats, error) {
 		}
 		stats.Previews = result.RowsAffected
 
-		result = tx.Where("created_at < ? AND NOT EXISTS (SELECT 1 FROM scrape_previews WHERE scrape_previews.candidate_id = media_candidates.id) AND NOT EXISTS (SELECT 1 FROM scrape_jobs WHERE scrape_jobs.candidate_id = media_candidates.id)", cutoff).Delete(&model.MediaCandidate{})
+		result = tx.Where("created_at < ? AND NOT EXISTS (SELECT 1 FROM scrape_previews WHERE scrape_previews.candidate_id = media_candidates.id) AND NOT EXISTS (SELECT 1 FROM scrape_jobs WHERE scrape_jobs.candidate_id = media_candidates.id)", dataCutoff).Delete(&model.MediaCandidate{})
 		if result.Error != nil {
 			return result.Error
 		}
 		stats.Candidates = result.RowsAffected
 
-		result = tx.Where("status IN ? AND completed_at < ? AND NOT EXISTS (SELECT 1 FROM media_candidates WHERE media_candidates.scan_id = scan_runs.id)", []string{"succeeded", "failed"}, cutoff).Delete(&model.ScanRun{})
+		result = tx.Where("status IN ? AND completed_at < ? AND NOT EXISTS (SELECT 1 FROM media_candidates WHERE media_candidates.scan_id = scan_runs.id)", []string{"succeeded", "failed"}, dataCutoff).Delete(&model.ScanRun{})
 		if result.Error != nil {
 			return result.Error
 		}
 		stats.Scans = result.RowsAffected
 		return nil
 	})
-	now := time.Now().UTC()
+	now = time.Now().UTC()
 	s.mu.Lock()
 	s.status.Running = false
 	s.status.LastRunAt = &now

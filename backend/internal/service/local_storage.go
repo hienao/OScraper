@@ -98,11 +98,11 @@ func (s *localStorage) ListDirectory(ctx context.Context, rawPath string, _ bool
 	}
 	localPath, err := s.secureExisting(rawPath, true)
 	if err != nil {
-		return nil, err
+		return nil, mapLocalDirectoryError("local.read_failed", "Could not read local media directory", err)
 	}
 	items, err := os.ReadDir(localPath)
 	if err != nil {
-		return nil, mapLocalFilesystemError("local.read_failed", "Could not read local media directory", err)
+		return nil, mapLocalDirectoryError("local.read_failed", "Could not read local media directory", err)
 	}
 	entries := make([]openlist.DirectoryEntry, 0, len(items))
 	parent, _ := s.Normalize(rawPath)
@@ -310,4 +310,12 @@ func mapLocalFilesystemError(code, message string, err error) error {
 		return NotFound("local.path_unavailable", "Local media path does not exist")
 	}
 	return Internal(code, message, err)
+}
+
+func mapLocalDirectoryError(code, message string, err error) error {
+	var serviceErr *Error
+	if (errors.As(err, &serviceErr) && serviceErr.Code == "local.path_unavailable") || errors.Is(err, fs.ErrNotExist) {
+		return NotFound("local.path_unavailable", "The directory does not exist. Please select a directory again")
+	}
+	return mapLocalFilesystemError(code, message, err)
 }
