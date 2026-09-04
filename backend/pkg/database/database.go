@@ -58,6 +58,9 @@ func applyMigrations(db *gorm.DB) error {
 		{version: 4, name: "scraped_media_markers", apply: func(tx *gorm.DB) error {
 			return tx.AutoMigrate(&model.ScanRun{}, &model.MediaCandidate{})
 		}},
+		{version: 5, name: "batch_scrape_runtime", apply: func(tx *gorm.DB) error {
+			return tx.AutoMigrate(&model.ScrapeBatchRun{}, &model.ScrapeBatchItem{})
+		}},
 	}
 	for _, migration := range migrations {
 		var count int64

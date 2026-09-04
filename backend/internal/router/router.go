@@ -25,6 +25,7 @@ type Dependencies struct {
 	Settings    *service.SettingService
 	Previews    *service.PreviewService
 	Jobs        *service.JobService
+	Batches     *service.BatchScrapeService
 	JobRecords  *service.JobRecordSettingsService
 	Logs        *service.LogService
 	Health      HealthProvider
@@ -42,6 +43,7 @@ func New(cfg *config.Config, db *gorm.DB, logManager *logging.Manager, dependenc
 	settingHandler := handler.NewSettingHandler(dependencies.Settings)
 	previewHandler := handler.NewPreviewHandler(dependencies.Previews)
 	jobHandler := handler.NewJobHandler(dependencies.Jobs, dependencies.JobRecords)
+	batchHandler := handler.NewBatchHandler(dependencies.Batches)
 	logHandler := handler.NewLogHandler(logManager, db, dependencies.Logs)
 
 	health := func(c *gin.Context) {
@@ -105,6 +107,9 @@ func New(cfg *config.Config, db *gorm.DB, logManager *logging.Manager, dependenc
 			targets.POST("/:id/previews/tmdb", previewHandler.Create)
 			targets.GET("/:id/previews/:previewId", previewHandler.Get)
 			targets.POST("/:id/jobs", jobHandler.Submit)
+			targets.POST("/:id/batches", batchHandler.Create)
+			targets.GET("/:id/batches/:batchId", batchHandler.Get)
+			targets.POST("/:id/batches/:batchId/cancel", batchHandler.Cancel)
 		}
 
 		localStorage := api.Group("/local-storage", middleware.JWTAuth(cfg, db), middleware.AdminSetupComplete(), middleware.AdminOnly())

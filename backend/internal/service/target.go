@@ -28,6 +28,7 @@ type TargetService struct {
 	connections *repository.ConnectionRepository
 	audit       *repository.AuditRepository
 	jobs        *repository.JobRepository
+	batches     *repository.BatchRepository
 	cipher      *cryptoutil.Cipher
 	client      DirectoryBrowser
 	local       *localStorage
@@ -80,7 +81,8 @@ func NewTargetService(db *gorm.DB, cipher *cryptoutil.Cipher, client DirectoryBr
 	}
 	return &TargetService{
 		targets: repository.NewTargetRepository(db), connections: repository.NewConnectionRepository(db),
-		audit: repository.NewAuditRepository(db), jobs: repository.NewJobRepository(db), cipher: cipher, client: client,
+		audit: repository.NewAuditRepository(db), jobs: repository.NewJobRepository(db),
+		batches: repository.NewBatchRepository(db), cipher: cipher, client: client,
 		local: newLocalStorage(localRoot),
 	}
 }
@@ -188,6 +190,13 @@ func (s *TargetService) requireIdle(id uint) error {
 	}
 	if count > 0 {
 		return Conflict("target.job_active", "Wait for active scrape jobs before changing this target")
+	}
+	batchCount, err := s.batches.ActiveBatchCount(id)
+	if err != nil {
+		return Internal("target.batch_check_failed", "Failed to check active scrape batches", err)
+	}
+	if batchCount > 0 {
+		return Conflict("target.batch_active", "Wait for the active scrape batch before changing this target")
 	}
 	return nil
 }
