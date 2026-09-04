@@ -48,8 +48,8 @@ func TestOpenAppliesInitialMigrationIdempotently(t *testing.T) {
 		if err := db.Model(&model.SchemaMigration{}).Count(&migrations).Error; err != nil {
 			t.Fatal(err)
 		}
-		if migrations != 4 {
-			t.Fatalf("expected four applied migrations, got %d", migrations)
+		if migrations != 5 {
+			t.Fatalf("expected five applied migrations, got %d", migrations)
 		}
 		sqlDB, err := db.DB()
 		if err != nil {
@@ -89,7 +89,7 @@ func TestLocalSourceMigrationUpgradesExistingOpenListTargets(t *testing.T) {
 	if err := db.Model(&model.SchemaMigration{}).Count(&migrations).Error; err != nil {
 		t.Fatal(err)
 	}
-	if migrations != 4 {
+	if migrations != 5 {
 		t.Fatalf("expected all migrations after upgrade, got %d", migrations)
 	}
 }

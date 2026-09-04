@@ -68,6 +68,14 @@ func (r *CatalogRepository) LatestScan(targetID uint) (*model.ScanRun, error) {
 	return &scan, nil
 }
 
+func (r *CatalogRepository) LatestSucceededScan(targetID uint) (*model.ScanRun, error) {
+	var scan model.ScanRun
+	if err := r.db.Where("target_id = ? AND status = ?", targetID, "succeeded").Order("id DESC").First(&scan).Error; err != nil {
+		return nil, err
+	}
+	return &scan, nil
+}
+
 func (r *CatalogRepository) Candidates(targetID, scanID uint) ([]model.MediaCandidate, error) {
 	var candidates []model.MediaCandidate
 	err := r.db.Where("target_id = ? AND scan_id = ?", targetID, scanID).Order("path ASC").Find(&candidates).Error

@@ -121,6 +121,15 @@ func (r submitJobRequest) command() service.SubmitJobCommand {
 	}
 }
 
+type createBatchRequest struct {
+	ScanID         uint `json:"scan_id"`
+	IncludeScraped bool `json:"include_scraped"`
+}
+
+func (r createBatchRequest) command() service.BatchScrapeCommand {
+	return service.BatchScrapeCommand{ScanID: r.ScanID, IncludeScraped: r.IncludeScraped}
+}
+
 type scrapingSettingsRequest struct {
 	APIKey       string `json:"api_key" binding:"max=500"`
 	BaseURL      string `json:"base_url" binding:"required,max=500"`

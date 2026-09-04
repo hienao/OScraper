@@ -8,6 +8,9 @@ const mocks = vi.hoisted(() => ({
   targetList: vi.fn(),
   targetScan: vi.fn(),
   targetTree: vi.fn(),
+  targetStartBatch: vi.fn(),
+  targetBatchResult: vi.fn(),
+  targetCancelBatch: vi.fn(),
   connectionList: vi.fn(),
   connectionTree: vi.fn(),
   localStatus: vi.fn(),
@@ -18,6 +21,7 @@ vi.mock('@/api/services', () => ({
     list: mocks.targetList,
     create: vi.fn(), update: vi.fn(), remove: vi.fn(), tree: mocks.targetTree,
     scan: mocks.targetScan, scanResult: vi.fn(), candidates: vi.fn(),
+    startBatch: mocks.targetStartBatch, batchResult: mocks.targetBatchResult, cancelBatch: mocks.targetCancelBatch,
   },
   connectionApi: { list: mocks.connectionList, tree: mocks.connectionTree },
   localStorageApi: { status: mocks.localStatus, tree: vi.fn() },
@@ -49,7 +53,23 @@ beforeEach(async () => {
     id: 8, target_id: 2, status: 'failed', candidate_count: 0, video_count: 0, scraped_candidate_count: 0,
     error_code: 'local.path_unavailable', error_message: 'The directory does not exist. Please select a directory again', created_at: new Date().toISOString(),
   })
+  mocks.targetStartBatch.mockResolvedValue({ id: 5, target_id: 2, actor_id: 7, scan_id: 8, status: 'running', total_count: 2, submitted_count: 0, skipped_count: 0, failed_count: 0, include_scraped: false, created_at: new Date().toISOString(), items: [] })
+  mocks.targetBatchResult.mockResolvedValue({
+    id: 5, target_id: 2, actor_id: 7, scan_id: 8, status: 'succeeded', total_count: 2, submitted_count: 1, skipped_count: 1, failed_count: 0,
+    include_scraped: false, created_at: new Date().toISOString(),
+    items: [
+      { id: 1, batch_id: 5, candidate_id: 11, path: '/media/Dune', tmdb_id: 447365, job_id: 77, status: 'submitted', created_at: new Date().toISOString(), updated_at: new Date().toISOString() },
+      { id: 2, batch_id: 5, candidate_id: 12, path: '/media/Aliens', status: 'skipped', skip_reason: 'multiple_matches', detail: 'TMDB returned 2 results', created_at: new Date().toISOString(), updated_at: new Date().toISOString() },
+    ],
+  })
+  mocks.targetCancelBatch.mockResolvedValue({ id: 5, target_id: 2, actor_id: 7, scan_id: 8, status: 'canceled', total_count: 2, submitted_count: 0, skipped_count: 2, failed_count: 0, include_scraped: false, created_at: new Date().toISOString(), items: [] })
 })
+
+const batchCandidates = [
+  { id: 11, scan_id: 8, target_id: 2, path: '/media/Dune', kind: 'movie', fingerprint: 'f1', representative_file: 'Dune.mkv', parsed_title: 'Dune', year: 2021, confidence: 90, video_count: 1, scraped: false, status: 'ready', created_at: new Date().toISOString() },
+  { id: 12, scan_id: 8, target_id: 2, path: '/media/Aliens', kind: 'movie', fingerprint: 'f2', representative_file: 'Aliens.mkv', parsed_title: 'Aliens', year: 1986, confidence: 85, video_count: 1, scraped: false, status: 'ready', created_at: new Date().toISOString() },
+  { id: 13, scan_id: 8, target_id: 2, path: '/media/Old', kind: 'movie', fingerprint: 'f3', representative_file: 'Old.mkv', parsed_title: 'Old', year: 2021, confidence: 80, video_count: 1, scraped: true, status: 'ready', created_at: new Date().toISOString() },
+]
 
 it('translates a stored missing-directory scan failure into actionable text', async () => {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } })
@@ -82,4 +102,67 @@ it('shows the offending path separator without blocking safe directory browsing'
   expect(await screen.findByText('已跳过 1 个条目：名称包含路径分隔符“/”。请在 OpenList 的 filename_char_mapping 中配置 {"/":"|"}，然后刷新目录。')).toBeInTheDocument()
   expect(screen.getByTitle(unsafeName)).toBeInTheDocument()
   expect(screen.getByRole('button', { name: 'Movies' })).toBeInTheDocument()
+})
+
+function renderTargets() {
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } })
+  return render(<MemoryRouter><QueryClientProvider client={client}><TargetsPage /></QueryClientProvider></MemoryRouter>)
+}
+
+function mockSucceededScan() {
+  mocks.targetScan.mockResolvedValue({
+    id: 8, target_id: 2, status: 'succeeded', candidate_count: 3, video_count: 3, scraped_candidate_count: 1,
+    created_at: new Date().toISOString(), candidates: batchCandidates,
+  })
+}
+
+it('scrapes all media with a unique match and shows per-item skip reasons', async () => {
+  mockSucceededScan()
+  renderTargets()
+
+  fireEvent.click(await screen.findByRole('button', { name: '扫描媒体' }))
+  fireEvent.click(await screen.findByRole('button', { name: '全部刮削' }))
+
+  expect(await screen.findByText(/将对 2 个媒体逐个匹配 TMDB/)).toBeInTheDocument()
+  fireEvent.click(screen.getByRole('button', { name: '开始刮削' }))
+
+  await waitFor(() => expect(mocks.targetStartBatch).toHaveBeenCalledWith(2, { include_scraped: false }))
+  expect(await screen.findByText('已提交 1 · 已跳过 1 · 失败 0')).toBeInTheDocument()
+  expect(screen.getByText('已跳过 · 多个 TMDB 匹配结果')).toBeInTheDocument()
+  expect(screen.getByText('已提交作业')).toBeInTheDocument()
+})
+
+it('re-scrapes already scraped media only when the option is enabled', async () => {
+  mockSucceededScan()
+  renderTargets()
+
+  fireEvent.click(await screen.findByRole('button', { name: '扫描媒体' }))
+  fireEvent.click(await screen.findByRole('button', { name: '全部刮削' }))
+
+  expect(await screen.findByText(/将对 2 个媒体逐个匹配 TMDB/)).toBeInTheDocument()
+  fireEvent.click(screen.getByRole('checkbox', { name: '同时重新刮削已刮削的媒体' }))
+  expect(await screen.findByText(/将对 3 个媒体逐个匹配 TMDB/)).toBeInTheDocument()
+  fireEvent.click(screen.getByRole('button', { name: '开始刮削' }))
+
+  await waitFor(() => expect(mocks.targetStartBatch).toHaveBeenCalledWith(2, { include_scraped: true }))
+})
+
+it('stops a running scrape batch and shows the canceled summary', async () => {
+  mockSucceededScan()
+  mocks.targetBatchResult.mockImplementation(() => new Promise(() => {}))
+  renderTargets()
+
+  fireEvent.click(await screen.findByRole('button', { name: '扫描媒体' }))
+  fireEvent.click(await screen.findByRole('button', { name: '全部刮削' }))
+  fireEvent.click(await screen.findByRole('button', { name: '开始刮削' }))
+
+  expect(await screen.findByText('正在匹配媒体 0/2…')).toBeInTheDocument()
+  const stop = screen.getByRole('button', { name: '停止' })
+  for (const button of screen.getAllByRole('button', { name: /TMDB 预览/ })) {
+    expect(button).toBeDisabled()
+  }
+  fireEvent.click(stop)
+
+  await waitFor(() => expect(mocks.targetCancelBatch).toHaveBeenCalledWith(2, 5))
+  expect(await screen.findByText('已提交 0 · 已跳过 2 · 失败 0')).toBeInTheDocument()
 })

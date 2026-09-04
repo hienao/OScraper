@@ -154,6 +154,43 @@ export interface ScanRun {
   candidates?: MediaCandidate[]
 }
 
+export type BatchRunStatus = 'pending' | 'running' | 'succeeded' | 'failed' | 'canceled'
+export type BatchItemStatus = 'pending' | 'submitted' | 'skipped' | 'failed'
+export type BatchSkipReason = 'no_match' | 'multiple_matches' | 'plan_conflicts' | 'stale' | 'already_active' | 'canceled'
+
+export interface ScrapeBatchItem {
+  id: number
+  batch_id: number
+  candidate_id: number
+  path: string
+  tmdb_id?: number
+  job_id?: number
+  status: BatchItemStatus
+  skip_reason?: BatchSkipReason
+  detail?: string
+  created_at: string
+  updated_at: string
+}
+
+export interface ScrapeBatchRun {
+  id: number
+  target_id: number
+  actor_id: number
+  scan_id: number
+  status: BatchRunStatus
+  total_count: number
+  submitted_count: number
+  skipped_count: number
+  failed_count: number
+  include_scraped: boolean
+  error_code?: string
+  error_message?: string
+  started_at?: string
+  completed_at?: string
+  created_at: string
+  items: ScrapeBatchItem[]
+}
+
 export interface ScrapingSettings {
   has_api_key: boolean
   api_key_mask?: string

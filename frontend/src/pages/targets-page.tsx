@@ -8,7 +8,7 @@ import { useState, type FormEvent } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useNavigate } from 'react-router-dom'
 import { connectionApi, jobApi, localStorageApi, previewApi, targetApi } from '@/api/services'
-import type { DirectoryWarning, LibraryType, LocalStorageStatus, MediaCandidate, ScanRun, ScrapePreview, ScrapeTarget, SourceType, TargetInput, TMDBSearchResult } from '@/api/types'
+import type { BatchItemStatus, DirectoryWarning, LibraryType, LocalStorageStatus, MediaCandidate, ScanRun, ScrapeBatchRun, ScrapePreview, ScrapeTarget, SourceType, TargetInput, TMDBSearchResult } from '@/api/types'
 import { AppDialog } from '@/components/common/app-dialog'
 import { AppSelect } from '@/components/common/app-select'
 import { CheckboxField } from '@/components/common/checkbox-field'
@@ -85,6 +85,9 @@ export function TargetsPage() {
   const [scanTarget, setScanTarget] = useState<ScrapeTarget | null>(null)
   const [scanResult, setScanResult] = useState<ScanRun | null>(null)
   const [scrapeFilter, setScrapeFilter] = useState<'all' | 'scraped' | 'unscraped'>('all')
+  const [batch, setBatch] = useState<ScrapeBatchRun | null>(null)
+  const [batchConfirmOpen, setBatchConfirmOpen] = useState(false)
+  const [includeScraped, setIncludeScraped] = useState(false)
   const [matchCandidate, setMatchCandidate] = useState<MediaCandidate | null>(null)
   const [searchTitle, setSearchTitle] = useState('')
   const [searchYear, setSearchYear] = useState('')
@@ -111,6 +114,25 @@ export function TargetsPage() {
     enabled: Boolean(scanTarget && scanResult?.id && (scanResult.status === 'pending' || scanResult.status === 'running')),
     refetchInterval: (query) => {
       const status = query.state.data?.status ?? scanResult?.status
+      return status === 'pending' || status === 'running' ? 1000 : false
+    },
+  })
+  const startBatch = useMutation({
+    mutationFn: ({ target, includeScraped: scraped }: { target: ScrapeTarget; includeScraped: boolean }) => targetApi.startBatch(target.id, { include_scraped: scraped }),
+    onSuccess: (result) => setBatch(result),
+    onError: (error) => setNotice({ variant: 'error', text: errorMessage(error, t('targets.batchError')) }),
+  })
+  const cancelBatch = useMutation({
+    mutationFn: (value: ScrapeBatchRun) => targetApi.cancelBatch(value.target_id, value.id),
+    onSuccess: (result) => setBatch(result),
+    onError: (error) => setNotice({ variant: 'error', text: errorMessage(error, t('targets.batchCancelError')) }),
+  })
+  const batchStatus = useQuery({
+    queryKey: ['target-batch', scanTarget?.id, batch?.id],
+    queryFn: () => targetApi.batchResult(scanTarget!.id, batch!.id),
+    enabled: Boolean(scanTarget && batch?.id && (batch.status === 'pending' || batch.status === 'running')),
+    refetchInterval: (query) => {
+      const status = query.state.data?.status ?? batch?.status
       return status === 'pending' || status === 'running' ? 1000 : false
     },
   })
@@ -172,6 +194,7 @@ export function TargetsPage() {
     setScanTarget(target)
     setScanResult(null)
     setScrapeFilter('all')
+    setBatch(null)
     scan.mutate(target)
   }
   function startMatch(candidate: MediaCandidate) {
@@ -258,6 +281,28 @@ export function TargetsPage() {
   const currentScan = scanStatus.data ?? scanResult
   const scanActive = scan.isPending || currentScan?.status === 'pending' || currentScan?.status === 'running'
   const visibleCandidates = currentScan?.candidates?.filter((candidate) => scrapeFilter === 'all' || (scrapeFilter === 'scraped' ? candidate.scraped : !candidate.scraped)) ?? []
+  const currentBatch = batchStatus.data ?? batch
+  const batchActive = currentBatch?.status === 'pending' || currentBatch?.status === 'running'
+  const batchItemByCandidate = new Map((currentBatch?.items ?? []).map((item) => [item.candidate_id, item]))
+  const candidateCount = currentScan?.candidates?.length ?? 0
+  const unscrapedCount = currentScan?.candidates?.filter((candidate) => !candidate.scraped).length ?? 0
+  const batchTotal = includeScraped ? candidateCount : unscrapedCount
+  const batchDoneCount = currentBatch ? currentBatch.submitted_count + currentBatch.skipped_count + currentBatch.failed_count : 0
+
+  function batchBadgeFor(candidateId: number, t: TFunction) {
+    const item = batchItemByCandidate.get(candidateId)
+    if (!item) return null
+    switch (item.status as BatchItemStatus) {
+      case 'pending':
+        return <Badge variant="outline">{t('targets.batchItemPending')}</Badge>
+      case 'submitted':
+        return <Badge variant="soft">{t('targets.batchSubmitted')}</Badge>
+      case 'skipped':
+        return <Badge variant="outline">{t('targets.batchSkipped')} · {t(`targets.batchSkip.${item.skip_reason ?? 'canceled'}`)}</Badge>
+      case 'failed':
+        return <Badge variant="outline">{t('targets.batchFailed')}</Badge>
+    }
+  }
 
   return (
     <div className="mx-auto max-w-7xl space-y-5 px-4 py-8 sm:px-6 lg:px-8">
@@ -330,7 +375,7 @@ export function TargetsPage() {
             </div>
       </AppDialog>}
 
-      {scanTarget && <AppDialog open onOpenChange={(open) => { if (!open && !scanActive) setScanTarget(null) }} width="lg" closeLabel={t('common.close')} closeDisabled={scanActive} title={`${t('targets.scanTitle')} · ${scanTarget.name}`} description={t('targets.scanDescription')} footer={currentScan && !scanActive ? <Button onClick={() => setScanTarget(null)}>{t('common.close')}</Button> : undefined}>
+      {scanTarget && <AppDialog open onOpenChange={(open) => { if (!open && !scanActive && !batchActive) setScanTarget(null) }} width="lg" closeLabel={t('common.close')} closeDisabled={scanActive || batchActive} title={`${t('targets.scanTitle')} · ${scanTarget.name}`} description={t('targets.scanDescription')} footer={currentScan && !scanActive ? <Button onClick={() => setScanTarget(null)}>{t('common.close')}</Button> : undefined}>
             {scanActive && <div className="grid min-h-48 place-items-center"><div className="text-center"><Refresh className="mx-auto animate-spin text-emerald-600" size={28} /><p className="mt-3 text-sm text-neutral-500">{t('targets.scanningDescription')}</p></div></div>}
             {scan.isError && <div className="mt-5"><Message variant="error">{errorMessage(scan.error, t('targets.scanError'))}</Message></div>}
             {scanStatus.isError && <div className="mt-5"><Message variant="error">{errorMessage(scanStatus.error, t('targets.scanError'))}</Message></div>}
@@ -342,16 +387,35 @@ export function TargetsPage() {
                 <div className="rounded-xl bg-neutral-50 p-4 dark:bg-neutral-900"><p className="text-xs text-neutral-500">{t('targets.scrapedCandidates')}</p><p className="mt-1 text-2xl font-bold text-emerald-700 dark:text-emerald-300">{currentScan.scraped_candidate_count}</p></div>
               </div>
               {currentScan.candidates?.length === 0 && <p className="py-12 text-center text-sm text-neutral-500">{t('targets.noCandidates')}</p>}
-              {(currentScan.candidates?.length ?? 0) > 0 && <div className="mt-4 flex justify-end"><div className="w-full sm:w-48"><AppSelect value={scrapeFilter} onValueChange={(value) => setScrapeFilter(value as typeof scrapeFilter)} ariaLabel={t('targets.scrapeFilter')} options={[{ value: 'all', label: t('targets.allScrapeStates') }, { value: 'scraped', label: t('targets.onlyScraped') }, { value: 'unscraped', label: t('targets.onlyUnscraped') }]} /></div></div>}
+              {(currentScan.candidates?.length ?? 0) > 0 && <div className="mt-4 flex flex-wrap items-center justify-between gap-2">
+                <Button size="sm" className="gap-2" disabled={startBatch.isPending || batchActive} onClick={() => { setIncludeScraped(false); setBatchConfirmOpen(true) }}><Movie size={15} />{t('targets.scrapeAll')}</Button>
+                <div className="w-full sm:w-48"><AppSelect value={scrapeFilter} onValueChange={(value) => setScrapeFilter(value as typeof scrapeFilter)} ariaLabel={t('targets.scrapeFilter')} options={[{ value: 'all', label: t('targets.allScrapeStates') }, { value: 'scraped', label: t('targets.onlyScraped') }, { value: 'unscraped', label: t('targets.onlyUnscraped') }]} /></div>
+              </div>}
+              {currentBatch && batchActive && <div className="mt-4 rounded-xl border border-neutral-200 p-4 dark:border-neutral-800">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <p className="text-sm font-medium">{t('targets.batchRunning', { done: batchDoneCount, total: currentBatch.total_count })}</p>
+                  <div className="flex items-center gap-3"><p className="text-xs text-neutral-500">{t('targets.batchProgress', { submitted: currentBatch.submitted_count, skipped: currentBatch.skipped_count, failed: currentBatch.failed_count })}</p><Button size="sm" variant="outline" disabled={cancelBatch.isPending} onClick={() => cancelBatch.mutate(currentBatch)}>{t('targets.batchStop')}</Button></div>
+                </div>
+                <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-neutral-100 dark:bg-neutral-900"><div className="h-full rounded-full bg-emerald-600 transition-all" style={{ width: `${currentBatch.total_count > 0 ? Math.round((batchDoneCount / currentBatch.total_count) * 100) : 0}%` }} /></div>
+              </div>}
+              {currentBatch && !batchActive && <Message variant={currentBatch.status === 'succeeded' ? 'success' : currentBatch.status === 'canceled' ? 'warning' : 'error'}>
+                <span className="block font-medium">{t('targets.batchProgress', { submitted: currentBatch.submitted_count, skipped: currentBatch.skipped_count, failed: currentBatch.failed_count })}</span>
+                <span className="mt-1 block text-xs text-neutral-600 dark:text-neutral-300">{currentBatch.error_message || t('targets.batchDoneNote')}</span>
+              </Message>}
               {(currentScan.candidates?.length ?? 0) > 0 && visibleCandidates.length === 0 && <p className="py-12 text-center text-sm text-neutral-500">{t('targets.noFilteredCandidates')}</p>}
               <div className="mt-4 max-h-[55vh] space-y-3 overflow-y-auto pr-1">
                 {visibleCandidates.map((candidate) => <article key={candidate.id || candidate.path} className="rounded-xl border border-neutral-200 p-4 dark:border-neutral-800">
-                  <div className="flex flex-wrap items-start justify-between gap-3"><div className="min-w-0"><h3 className="truncate font-semibold">{candidate.parsed_title || candidate.path.split('/').pop()}</h3><p className="mt-1 break-all font-mono text-xs text-neutral-500">{candidate.path}</p></div><div className="flex flex-wrap justify-end gap-2"><Badge variant={candidate.scraped ? 'soft' : 'outline'}>{t(candidate.scraped ? 'targets.scraped' : 'targets.notScraped')}</Badge><Badge variant={candidate.status === 'ready' ? 'soft' : 'outline'}>{t(`targets.${candidate.status}`)}</Badge></div></div>
+                  <div className="flex flex-wrap items-start justify-between gap-3"><div className="min-w-0"><h3 className="truncate font-semibold">{candidate.parsed_title || candidate.path.split('/').pop()}</h3><p className="mt-1 break-all font-mono text-xs text-neutral-500">{candidate.path}</p></div><div className="flex flex-wrap justify-end gap-2">{batchBadgeFor(candidate.id, t)}<Badge variant={candidate.scraped ? 'soft' : 'outline'}>{t(candidate.scraped ? 'targets.scraped' : 'targets.notScraped')}</Badge><Badge variant={candidate.status === 'ready' ? 'soft' : 'outline'}>{t(`targets.${candidate.status}`)}</Badge></div></div>
                   <div className="mt-3 flex flex-wrap gap-2 text-xs"><Badge variant="outline">{t(`targets.${candidate.kind}`)}</Badge>{candidate.year && <Badge variant="outline">{candidate.year}</Badge>}{candidate.season !== undefined && <Badge variant="outline">S{String(candidate.season).padStart(2, '0')}</Badge>}{candidate.episode !== undefined && <Badge variant="outline">E{String(candidate.episode).padStart(2, '0')}</Badge>}{candidate.tmdb_id && <Badge variant="outline">TMDB {candidate.tmdb_id}</Badge>}<Badge variant="outline">{t('targets.confidence', { value: candidate.confidence })}</Badge><Badge variant="outline">{t('targets.videoCount', { count: candidate.video_count })}</Badge></div>
-                  <div className="mt-3"><Button size="sm" variant="outline" className="gap-2" onClick={() => startMatch(candidate)}><Movie size={15} />{t(candidate.scraped ? 'targets.rescrape' : 'targets.tmdbPreview')}</Button></div>
+                  <div className="mt-3"><Button size="sm" variant="outline" className="gap-2" disabled={batchActive} onClick={() => startMatch(candidate)}><Movie size={15} />{t(candidate.scraped ? 'targets.rescrape' : 'targets.tmdbPreview')}</Button></div>
                 </article>)}
               </div>
             </>}
+      </AppDialog>}
+
+      {batchConfirmOpen && scanTarget && <AppDialog open onOpenChange={setBatchConfirmOpen} width="sm" closeLabel={t('common.cancel')} title={t('targets.batchConfirmTitle')} description={t('targets.scanTitle')} footer={<><Button type="button" variant="ghost" onClick={() => setBatchConfirmOpen(false)}>{t('common.cancel')}</Button><Button className="gap-2" disabled={startBatch.isPending || batchTotal === 0} onClick={() => { setBatchConfirmOpen(false); startBatch.mutate({ target: scanTarget, includeScraped }) }}>{startBatch.isPending ? t('targets.submittingJob') : <><Check size={16} />{t('targets.batchStart')}</>}</Button></>}>
+        <p className="text-sm leading-6 text-neutral-700 dark:text-neutral-300">{t('targets.batchConfirmDescription', { total: batchTotal })}</p>
+        {candidateCount > 0 && unscrapedCount < candidateCount && <CheckboxField checked={includeScraped} onCheckedChange={setIncludeScraped} label={t('targets.batchIncludeScraped')} />}
       </AppDialog>}
 
       {matchCandidate && <AppDialog open onOpenChange={(open) => { if (!open) setMatchCandidate(null) }} width="xl" closeLabel={t('common.close')} title={t('targets.tmdbPreview')} description={<span className="break-all font-mono text-xs">{matchCandidate.path}</span>}>

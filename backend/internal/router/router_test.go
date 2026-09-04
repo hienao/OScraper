@@ -36,9 +36,11 @@ func TestAuthenticatedConnectionTargetAndScanFlow(t *testing.T) {
 			case "/media":
 				_, _ = writer.Write([]byte(`{"code":200,"data":{"content":[{"name":"Movies","is_dir":true},{"name":"Harry Potter /DTS","is_dir":true}]}}`))
 			case "/media/Movies":
-				_, _ = writer.Write([]byte(`{"code":200,"data":{"content":[{"name":"Arrival (2016)","is_dir":true}]}}`))
+				_, _ = writer.Write([]byte(`{"code":200,"data":{"content":[{"name":"Arrival (2016)","is_dir":true},{"name":"Lost Horizon (1937)","is_dir":true}]}}`))
 			case "/media/Movies/Arrival (2016)":
 				_, _ = writer.Write([]byte(`{"code":200,"data":{"content":[{"name":"Arrival.mkv","is_dir":false,"size":100,"modified":"2026-01-01"}]}}`))
+			case "/media/Movies/Lost Horizon (1937)":
+				_, _ = writer.Write([]byte(`{"code":200,"data":{"content":[{"name":"Lost Horizon.mkv","is_dir":false,"size":100,"modified":"2026-01-01"}]}}`))
 			default:
 				_, _ = writer.Write([]byte(`{"code":500,"message":"unexpected path"}`))
 			}
@@ -49,7 +51,12 @@ func TestAuthenticatedConnectionTargetAndScanFlow(t *testing.T) {
 			}
 			_, _ = writer.Write([]byte(`{"images":{"secure_base_url":"https://image.tmdb.org/t/p/"}}`))
 		case "/3/search/movie":
-			_, _ = writer.Write([]byte(`{"results":[{"id":329865,"title":"Arrival","original_title":"Arrival","release_date":"2016-11-10","vote_average":7.6}]}`))
+			switch request.URL.Query().Get("query") {
+			case "Lost Horizon":
+				_, _ = writer.Write([]byte(`{"results":[{"id":100,"title":"Lost Horizon","original_title":"Lost Horizon","release_date":"1937-03-02","vote_average":6.1},{"id":101,"title":"Lost Horizon","original_title":"Lost Horizon","release_date":"1973-03-11","vote_average":5.4}]}`))
+			default:
+				_, _ = writer.Write([]byte(`{"results":[{"id":329865,"title":"Arrival","original_title":"Arrival","release_date":"2016-11-10","vote_average":7.6}]}`))
+			}
 		case "/3/movie/329865":
 			_, _ = writer.Write([]byte(`{"id":329865,"title":"Arrival","original_title":"Arrival","release_date":"2016-11-10","overview":"A linguist meets visitors.","poster_path":"/arrival.jpg","vote_average":7.6,"genres":[{"id":18,"name":"Drama"}]}`))
 		default:
@@ -151,7 +158,7 @@ func TestAuthenticatedConnectionTargetAndScanFlow(t *testing.T) {
 		scan = requestJSON(t, server.URL, http.MethodGet, fmt.Sprintf("/api/scrape-targets/%d/scans/%d", targetID, scanID), token, nil, http.StatusOK)
 		data = responseData(t, scan)
 	}
-	if data["status"] != "succeeded" || int(data["candidate_count"].(float64)) != 1 || int(data["video_count"].(float64)) != 1 {
+	if data["status"] != "succeeded" || int(data["candidate_count"].(float64)) != 2 || int(data["video_count"].(float64)) != 2 {
 		t.Fatalf("unexpected scan response: %s", scan)
 	}
 	candidates := data["candidates"].([]any)
@@ -189,6 +196,47 @@ func TestAuthenticatedConnectionTargetAndScanFlow(t *testing.T) {
 	artifacts := plan["artifacts"].([]any)
 	if len(artifacts) != 2 || !strings.Contains(artifacts[0].(map[string]any)["content"].(string), "<movie>") {
 		t.Fatalf("metadata artifacts were not included in the immutable preview: %s", previewBody)
+	}
+	batchBody := requestJSON(t, server.URL, http.MethodPost, fmt.Sprintf("/api/scrape-targets/%d/batches", targetID), token, map[string]any{}, http.StatusAccepted)
+	batch := responseData(t, batchBody)
+	batchID := uint(batch["id"].(float64))
+	if int(batch["total_count"].(float64)) != 2 {
+		t.Fatalf("unexpected batch size: %s", batchBody)
+	}
+	deadline = time.Now().Add(10 * time.Second)
+	for batch["status"] == "pending" || batch["status"] == "running" {
+		if time.Now().After(deadline) {
+			t.Fatalf("batch did not finish: %s", batchBody)
+		}
+		time.Sleep(20 * time.Millisecond)
+		batchBody = requestJSON(t, server.URL, http.MethodGet, fmt.Sprintf("/api/scrape-targets/%d/batches/%d", targetID, batchID), token, nil, http.StatusOK)
+		batch = responseData(t, batchBody)
+	}
+	if batch["status"] != "succeeded" || int(batch["submitted_count"].(float64)) != 1 || int(batch["skipped_count"].(float64)) != 1 {
+		t.Fatalf("unexpected batch response: %s", batchBody)
+	}
+	submitted, ambiguous := false, false
+	for _, raw := range batch["items"].([]any) {
+		item := raw.(map[string]any)
+		switch item["status"] {
+		case "submitted":
+			if item["path"] != "/media/Movies/Arrival (2016)" || item["job_id"] == nil || int(item["tmdb_id"].(float64)) != 329865 {
+				t.Fatalf("unexpected submitted batch item: %#v", item)
+			}
+			submitted = true
+		case "skipped":
+			if item["skip_reason"] != "multiple_matches" {
+				t.Fatalf("unexpected skipped batch item: %#v", item)
+			}
+			ambiguous = true
+		}
+	}
+	if !submitted || !ambiguous {
+		t.Fatalf("batch items are missing expected outcomes: %s", batchBody)
+	}
+	jobs = requestJSON(t, server.URL, http.MethodGet, "/api/scrape-jobs", token, nil, http.StatusOK)
+	if total := responseData(t, jobs)["total"].(float64); total != 1 {
+		t.Fatalf("batch did not submit exactly one scrape job: %s", jobs)
 	}
 }
 

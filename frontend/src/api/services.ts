@@ -1,5 +1,5 @@
 import { apiRequest } from './client'
-import type { APIRequestLog, ApplicationLog, AuditLog, ConnectionTestResult, CreateConnectionInput, DirectoryLevel, JobRecordSettings, JobStatus, LocalStorageStatus, LogCleanupStats, LogSettings, LogType, MediaCandidate, OpenListConnection, Page, ScanRun, ScrapeJob, ScrapeJobOperation, ScrapePreview, ScrapingSettings, ScrapingSettingsInput, ScrapeTarget, TargetInput, TMDBSearchResult, TokenResponse, UpdateConnectionInput, User } from './types'
+import type { APIRequestLog, ApplicationLog, AuditLog, ConnectionTestResult, CreateConnectionInput, DirectoryLevel, JobRecordSettings, JobStatus, LocalStorageStatus, LogCleanupStats, LogSettings, LogType, MediaCandidate, OpenListConnection, Page, ScanRun, ScrapeBatchRun, ScrapeJob, ScrapeJobOperation, ScrapePreview, ScrapingSettings, ScrapingSettingsInput, ScrapeTarget, TargetInput, TMDBSearchResult, TokenResponse, UpdateConnectionInput, User } from './types'
 
 export const authApi = {
   login: (body: { username: string; password: string }) => apiRequest<TokenResponse>('/api/auth/login', { method: 'POST', body, auth: false }),
@@ -37,6 +37,9 @@ export const targetApi = {
   scan: (id: number, refresh = true) => apiRequest<ScanRun>(`/api/scrape-targets/${id}/scans?refresh=${refresh}`, { method: 'POST' }),
   scanResult: (id: number, scanId: number) => apiRequest<ScanRun>(`/api/scrape-targets/${id}/scans/${scanId}`),
   candidates: (id: number, scanId?: number) => apiRequest<MediaCandidate[]>(`/api/scrape-targets/${id}/candidates${scanId ? `?scan_id=${scanId}` : ''}`),
+  startBatch: (id: number, body: { scan_id?: number; include_scraped?: boolean } = {}) => apiRequest<ScrapeBatchRun>(`/api/scrape-targets/${id}/batches`, { method: 'POST', body }),
+  batchResult: (id: number, batchId: number) => apiRequest<ScrapeBatchRun>(`/api/scrape-targets/${id}/batches/${batchId}`),
+  cancelBatch: (id: number, batchId: number) => apiRequest<ScrapeBatchRun>(`/api/scrape-targets/${id}/batches/${batchId}/cancel`, { method: 'POST' }),
 }
 
 export const localStorageApi = {

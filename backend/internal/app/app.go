@@ -33,6 +33,7 @@ type HealthReport struct {
 type App struct {
 	Engine      *gin.Engine
 	Jobs        *service.JobService
+	Batches     *service.BatchScrapeService
 	Catalog     *service.CatalogService
 	Maintenance *maintenance.Service
 	Logs        *service.LogService
@@ -70,6 +71,13 @@ func New(cfg *config.Config, db *gorm.DB, logs *logging.Manager, cipher *cryptou
 		_ = catalogService.Shutdown(context.Background())
 		return nil, err
 	}
+	batchService := service.NewBatchScrapeService(db, settingService, previewService, jobService, cfg.ScanWorkers, cfg.ScanQueueSize)
+	if err := batchService.Start(); err != nil {
+		cancel()
+		_ = jobService.Shutdown(context.Background())
+		_ = catalogService.Shutdown(context.Background())
+		return nil, err
+	}
 	logService := service.NewLogService(logs, db, cfg.LogRetentionDays)
 	if err := logService.Start(rootCtx); err != nil {
 		cancel()
@@ -93,10 +101,10 @@ func New(cfg *config.Config, db *gorm.DB, logs *logging.Manager, cipher *cryptou
 		_ = catalogService.Shutdown(context.Background())
 		return nil, err
 	}
-	application := &App{Jobs: jobService, Catalog: catalogService, Maintenance: maintenanceService, Logs: logService, JobRecords: jobRecordSettings, targets: targetService, db: db, logs: logs, cancel: cancel}
+	application := &App{Jobs: jobService, Batches: batchService, Catalog: catalogService, Maintenance: maintenanceService, Logs: logService, JobRecords: jobRecordSettings, targets: targetService, db: db, logs: logs, cancel: cancel}
 	application.Engine = router.New(cfg, db, logs, router.Dependencies{
 		Auth: authService, Connections: connectionService, Targets: targetService, Catalog: catalogService,
-		Settings: settingService, Previews: previewService, Jobs: jobService, JobRecords: jobRecordSettings, Logs: logService, Health: application.Health,
+		Settings: settingService, Previews: previewService, Jobs: jobService, Batches: batchService, JobRecords: jobRecordSettings, Logs: logService, Health: application.Health,
 	})
 	return application, nil
 }
@@ -120,6 +128,7 @@ func (a *App) Health(ctx context.Context) (any, bool) {
 			"database":    {OK: businessOK},
 			"logging":     {OK: logsOK, Details: logDetails},
 			"jobs":        {OK: true, Details: a.Jobs.Metrics()},
+			"batches":     {OK: true, Details: a.Batches.Metrics()},
 			"scans":       {OK: true, Details: a.Catalog.Metrics()},
 			"maintenance": {OK: a.Maintenance.Status().LastError == "", Details: a.Maintenance.Status()},
 			"local_media": {OK: local.Mounted && local.Readable, Details: local},
@@ -129,7 +138,7 @@ func (a *App) Health(ctx context.Context) (any, bool) {
 
 func (a *App) Shutdown(ctx context.Context) error {
 	a.cancel()
-	return errors.Join(a.Catalog.Shutdown(ctx), a.Jobs.Shutdown(ctx), a.Logs.Shutdown(ctx), a.Maintenance.Shutdown(ctx))
+	return errors.Join(a.Batches.Shutdown(ctx), a.Catalog.Shutdown(ctx), a.Jobs.Shutdown(ctx), a.Logs.Shutdown(ctx), a.Maintenance.Shutdown(ctx))
 }
 
 func ping(ctx context.Context, db *gorm.DB) bool {
