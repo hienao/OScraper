@@ -49,12 +49,16 @@ func expandEpisodeArtifacts(ctx context.Context, provider TMDBSeasonCatalog, con
 		}
 	}
 	generatedAt := time.Now().UTC()
+	kept := make([]EpisodeFilePlan, 0, len(plan.EpisodeFiles))
 	for _, file := range plan.EpisodeFiles {
 		episode, found := episodes[[2]int{file.Season, file.Episode}]
 		if !found {
-			plan.Conflicts = append(plan.Conflicts, PlanConflict{Code: "episode_metadata_missing", SourcePath: file.SourcePath, TargetPath: file.TargetPath})
+			// Episodes TMDB does not know about stay untouched instead of blocking
+			// the whole plan: no rename, no generated metadata for them.
+			skipEpisode(plan, file)
 			continue
 		}
+		kept = append(kept, file)
 		base := strings.TrimSuffix(file.TargetPath, path.Ext(file.TargetPath))
 		nfo := PreviewArtifact{Path: base + ".nfo", Kind: "episode_nfo", Content: metadata.BuildEpisodeNFO(detail.Title, episode, generatedAt)}
 		plan.Artifacts = append(plan.Artifacts, nfo)
@@ -65,10 +69,40 @@ func expandEpisodeArtifacts(ctx context.Context, provider TMDBSeasonCatalog, con
 			plan.GeneratedFiles = append(plan.GeneratedFiles, thumb.Path)
 		}
 	}
+	plan.EpisodeFiles = kept
+	if len(plan.SkippedEpisodes) > 0 {
+		plan.Warnings = append(plan.Warnings, "episodes_skipped")
+	}
 	if len(plan.Conflicts) > 0 {
 		plan.Ready = false
 	}
 	return nil
+}
+
+// skipEpisode drops one episode and its companion assets from the rename plan so
+// the executor never touches them.
+func skipEpisode(plan *PreviewPlan, file EpisodeFilePlan) {
+	plan.SkippedEpisodes = append(plan.SkippedEpisodes, file)
+	videoBase := strings.TrimSuffix(path.Base(file.SourcePath), path.Ext(file.SourcePath))
+	directory := path.Dir(file.SourcePath)
+	kept := make([]RenameItem, 0, len(plan.ProposedFileRenames))
+	for _, rename := range plan.ProposedFileRenames {
+		sameDirectory := path.Dir(rename.SourcePath) == directory
+		isSkippedVideo := rename.SourcePath == file.SourcePath
+		isSkippedCompanion := sameDirectory && rename.AssetType != "video" && isCompanionOf(rename.SourcePath, videoBase)
+		if isSkippedVideo || isSkippedCompanion {
+			continue
+		}
+		kept = append(kept, rename)
+	}
+	plan.ProposedFileRenames = kept
+}
+
+// isCompanionOf mirrors the planner's companion matching: same video base plus a
+// separator or exact base match.
+func isCompanionOf(sourcePath, videoBase string) bool {
+	base := strings.TrimSuffix(path.Base(sourcePath), path.Ext(sourcePath))
+	return base == videoBase || strings.HasPrefix(base, videoBase+".") || strings.HasPrefix(base, videoBase+"-") || strings.HasPrefix(base, videoBase+"_")
 }
 
 func isNFOArtifact(kind string) bool { return kind == "nfo" || strings.HasSuffix(kind, "_nfo") }

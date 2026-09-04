@@ -47,7 +47,7 @@ func buildFullPreviewPlan(target *model.ScrapeTarget, candidate *model.MediaCand
 		ReadOnly: true, RenameAllowed: target.RenameEnabled, OrganizeFlatMovie: flatMovie,
 		SourcePath: candidate.Path, ProposedDirectoryName: path.Base(finalRoot), ProposedDirectoryPath: finalRoot,
 		ProposedDirectoryCreates: []string{}, ProposedDirectoryRenames: []RenameItem{},
-		ProposedFileRenames: []RenameItem{}, GeneratedFiles: []string{}, Artifacts: []PreviewArtifact{}, EpisodeFiles: []EpisodeFilePlan{}, Warnings: []string{}, Conflicts: []PlanConflict{},
+		ProposedFileRenames: []RenameItem{}, GeneratedFiles: []string{}, Artifacts: []PreviewArtifact{}, EpisodeFiles: []EpisodeFilePlan{}, SkippedEpisodes: []EpisodeFilePlan{}, Warnings: []string{}, Conflicts: []PlanConflict{},
 	}
 	plan.ScrapeMarkerPath = markerPathForPlan(plan)
 	planner := newRenamePlanner(&plan, entries, siblings)
