@@ -123,6 +123,10 @@ it('scrapes all media with a unique match and shows per-item skip reasons', asyn
   fireEvent.click(await screen.findByRole('button', { name: '扫描媒体' }))
   fireEvent.click(await screen.findByRole('button', { name: '全部刮削' }))
 
+  // The scan dialog defaults to showing only unscraped media.
+  expect(screen.queryByText('Old')).not.toBeInTheDocument()
+  expect(screen.getByText('Dune')).toBeInTheDocument()
+  expect(screen.getByText('Aliens')).toBeInTheDocument()
   expect(await screen.findByText(/将对 2 个媒体逐个匹配 TMDB/)).toBeInTheDocument()
   fireEvent.click(screen.getByRole('button', { name: '开始刮削' }))
 
