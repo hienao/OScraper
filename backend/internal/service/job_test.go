@@ -130,6 +130,13 @@ func newJobTestService(t *testing.T, remote *memoryOpenList) (*JobService, *gorm
 	if err != nil {
 		t.Fatal(err)
 	}
+	// Job execution dispatches worker goroutines while tests poll the result; the
+	// shared in-memory database needs a single connection to avoid table lock errors.
+	if sqlDB, err := db.DB(); err != nil {
+		t.Fatal(err)
+	} else {
+		sqlDB.SetMaxOpenConns(1)
+	}
 	if err := db.AutoMigrate(&model.OpenListConnection{}, &model.ScrapeTarget{}, &model.ScanRun{}, &model.MediaCandidate{}, &model.ScrapePreview{}, &model.ScrapeJob{}, &model.ScrapeJobOperation{}, &model.AdminAuditLog{}); err != nil {
 		t.Fatal(err)
 	}

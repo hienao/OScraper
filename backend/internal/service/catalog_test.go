@@ -112,6 +112,13 @@ func newCatalogTestService(t *testing.T, libraryType string, levels map[string][
 	if err != nil {
 		t.Fatal(err)
 	}
+	// Scan recovery dispatches a worker goroutine while tests poll the result; the
+	// shared in-memory database needs a single connection to avoid table lock errors.
+	if sqlDB, err := db.DB(); err != nil {
+		t.Fatal(err)
+	} else {
+		sqlDB.SetMaxOpenConns(1)
+	}
 	if err := db.AutoMigrate(&model.OpenListConnection{}, &model.ScrapeTarget{}, &model.ScanRun{}, &model.MediaCandidate{}, &model.ScrapePreview{}, &model.AdminAuditLog{}); err != nil {
 		t.Fatal(err)
 	}
