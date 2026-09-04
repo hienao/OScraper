@@ -280,6 +280,7 @@ export interface PreviewPlan {
   generated_files: string[]
   artifacts: { path: string; kind: 'nfo' | 'poster' | 'backdrop' | 'episode_nfo' | 'episode_thumb'; source_url?: string; content?: string }[]
   episode_files: { source_path: string; target_path: string; season: number; episode: number }[]
+  skipped_episodes: { source_path: string; target_path: string; season: number; episode: number }[]
   warnings: string[]
   conflicts: { code: string; source_path?: string; target_path?: string }[]
 }

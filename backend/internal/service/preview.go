@@ -90,6 +90,7 @@ type PreviewPlan struct {
 	GeneratedFiles           []string          `json:"generated_files"`
 	Artifacts                []PreviewArtifact `json:"artifacts"`
 	EpisodeFiles             []EpisodeFilePlan `json:"episode_files"`
+	SkippedEpisodes          []EpisodeFilePlan `json:"skipped_episodes"`
 	Warnings                 []string          `json:"warnings"`
 	Conflicts                []PlanConflict    `json:"conflicts"`
 }
@@ -311,6 +312,9 @@ func previewResponse(preview *model.ScrapePreview, match tmdb.Detail, plan Previ
 	}
 	if plan.EpisodeFiles == nil {
 		plan.EpisodeFiles = []EpisodeFilePlan{}
+	}
+	if plan.SkippedEpisodes == nil {
+		plan.SkippedEpisodes = []EpisodeFilePlan{}
 	}
 	if plan.Warnings == nil {
 		plan.Warnings = []string{}
