@@ -84,7 +84,7 @@ export function TargetsPage() {
   const [remoteBrowserPath, setRemoteBrowserPath] = useState('/')
   const [scanTarget, setScanTarget] = useState<ScrapeTarget | null>(null)
   const [scanResult, setScanResult] = useState<ScanRun | null>(null)
-  const [scrapeFilter, setScrapeFilter] = useState<'all' | 'scraped' | 'unscraped'>('all')
+  const [scrapeFilter, setScrapeFilter] = useState<'all' | 'scraped' | 'unscraped'>('unscraped')
   const [batch, setBatch] = useState<ScrapeBatchRun | null>(null)
   const [batchConfirmOpen, setBatchConfirmOpen] = useState(false)
   const [includeScraped, setIncludeScraped] = useState(false)
@@ -193,7 +193,7 @@ export function TargetsPage() {
     setNotice(null)
     setScanTarget(target)
     setScanResult(null)
-    setScrapeFilter('all')
+    setScrapeFilter('unscraped')
     setBatch(null)
     scan.mutate(target)
   }
