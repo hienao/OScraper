@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -31,7 +32,7 @@ func TestEpisodeArtifactsUseFinalVideoBaseName(t *testing.T) {
 	}
 }
 
-func TestMissingEpisodesAreSkippedInsteadOfBlocking(t *testing.T) {
+func TestMissingEpisodesRenameButGenerateNoMetadata(t *testing.T) {
 	plan := PreviewPlan{
 		Ready: true, Artifacts: []PreviewArtifact{}, GeneratedFiles: []string{}, Warnings: []string{},
 		EpisodeFiles: []EpisodeFilePlan{
@@ -61,11 +62,16 @@ func TestMissingEpisodesAreSkippedInsteadOfBlocking(t *testing.T) {
 	if len(plan.EpisodeFiles) != 1 || plan.EpisodeFiles[0].Episode != 1 {
 		t.Fatalf("unexpected remaining episode files: %#v", plan.EpisodeFiles)
 	}
-	if len(plan.ProposedFileRenames) != 3 || plan.ProposedFileRenames[0].SourcePath != "/tv/Show/raw1.mkv" || plan.ProposedFileRenames[1].SourcePath != "/tv/Show/raw1.jpg" || plan.ProposedFileRenames[2].SourcePath != "/tv/Show/raw1.nfo" {
-		t.Fatalf("skipped episode renames were not dropped: %#v", plan.ProposedFileRenames)
+	if len(plan.ProposedFileRenames) != 6 {
+		t.Fatalf("skipped episodes must still be renamed: %#v", plan.ProposedFileRenames)
 	}
 	if len(plan.Artifacts) != 2 || plan.Artifacts[0].Path != "/tv/Show/Season 01/Show - S01E01.nfo" {
-		t.Fatalf("unexpected artifacts: %#v", plan.Artifacts)
+		t.Fatalf("metadata must only be generated for matched episodes: %#v", plan.Artifacts)
+	}
+	for _, artifact := range plan.Artifacts {
+		if strings.Contains(artifact.Path, "S01E21") {
+			t.Fatalf("metadata was generated for the skipped episode: %#v", artifact)
+		}
 	}
 	if len(plan.Warnings) != 1 || plan.Warnings[0] != "episodes_skipped" {
 		t.Fatalf("episodes_skipped warning was not added: %#v", plan.Warnings)

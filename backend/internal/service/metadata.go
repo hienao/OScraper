@@ -53,9 +53,9 @@ func expandEpisodeArtifacts(ctx context.Context, provider TMDBSeasonCatalog, con
 	for _, file := range plan.EpisodeFiles {
 		episode, found := episodes[[2]int{file.Season, file.Episode}]
 		if !found {
-			// Episodes TMDB does not know about stay untouched instead of blocking
-			// the whole plan: no rename, no generated metadata for them.
-			skipEpisode(plan, file)
+			// Episodes TMDB does not know about are still renamed, but no
+			// episode metadata is generated for them.
+			plan.SkippedEpisodes = append(plan.SkippedEpisodes, file)
 			continue
 		}
 		kept = append(kept, file)
@@ -77,32 +77,6 @@ func expandEpisodeArtifacts(ctx context.Context, provider TMDBSeasonCatalog, con
 		plan.Ready = false
 	}
 	return nil
-}
-
-// skipEpisode drops one episode and its companion assets from the rename plan so
-// the executor never touches them.
-func skipEpisode(plan *PreviewPlan, file EpisodeFilePlan) {
-	plan.SkippedEpisodes = append(plan.SkippedEpisodes, file)
-	videoBase := strings.TrimSuffix(path.Base(file.SourcePath), path.Ext(file.SourcePath))
-	directory := path.Dir(file.SourcePath)
-	kept := make([]RenameItem, 0, len(plan.ProposedFileRenames))
-	for _, rename := range plan.ProposedFileRenames {
-		sameDirectory := path.Dir(rename.SourcePath) == directory
-		isSkippedVideo := rename.SourcePath == file.SourcePath
-		isSkippedCompanion := sameDirectory && rename.AssetType != "video" && isCompanionOf(rename.SourcePath, videoBase)
-		if isSkippedVideo || isSkippedCompanion {
-			continue
-		}
-		kept = append(kept, rename)
-	}
-	plan.ProposedFileRenames = kept
-}
-
-// isCompanionOf mirrors the planner's companion matching: same video base plus a
-// separator or exact base match.
-func isCompanionOf(sourcePath, videoBase string) bool {
-	base := strings.TrimSuffix(path.Base(sourcePath), path.Ext(sourcePath))
-	return base == videoBase || strings.HasPrefix(base, videoBase+".") || strings.HasPrefix(base, videoBase+"-") || strings.HasPrefix(base, videoBase+"_")
 }
 
 func isNFOArtifact(kind string) bool { return kind == "nfo" || strings.HasSuffix(kind, "_nfo") }
