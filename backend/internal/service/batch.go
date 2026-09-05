@@ -29,6 +29,7 @@ var (
 	batchRateLimitDelay  = 2 * time.Second
 	batchQueueWait       = 60 * time.Second
 	batchQueuePollPeriod = 2 * time.Second
+	errBatchCanceled     = errors.New("scrape batch canceled")
 )
 
 type BatchPreviewer interface {
@@ -389,6 +390,9 @@ func (s *BatchScrapeService) processItem(ctx context.Context, batch *model.Scrap
 	renameMedia := len(plan.ProposedDirectoryCreates)+len(plan.ProposedDirectoryRenames)+len(plan.ProposedFileRenames) > 0
 	job, err := s.submitWithRetry(batch, item, preview, renameMedia)
 	if err != nil {
+		if errors.Is(err, errBatchCanceled) {
+			return batchItemResult{status: "skipped", skipReason: "canceled", detail: "The batch was canceled", tmdbID: &preview.Match.ID}
+		}
 		if code, serviceErr := errorCodeOf(err); serviceErr && code == "job.already_active" {
 			return batchItemResult{status: "skipped", skipReason: "already_active", detail: "The media already has an active scrape job", tmdbID: &preview.Match.ID}
 		}
@@ -431,16 +435,41 @@ func (s *BatchScrapeService) createPreviewWithRetry(ctx context.Context, batch *
 func (s *BatchScrapeService) submitWithRetry(batch *model.ScrapeBatchRun, item *model.ScrapeBatchItem, preview *PreviewResponse, renameMedia bool) (*model.ScrapeJob, error) {
 	command := SubmitJobCommand{PreviewID: preview.ID, RenameMedia: renameMedia, ConfirmDirectoryFingerprint: preview.Fingerprint}
 	idempotencyKey := fmt.Sprintf("batch-%d-%d", batch.ID, item.ID)
-	deadline := time.Now().Add(batchQueueWait)
+	var queueDeadline time.Time
 	for {
+		current, lookupErr := s.batches.FindBatch(batch.ID, batch.TargetID)
+		if lookupErr != nil {
+			return nil, lookupErr
+		}
+		if current.Status != "pending" && current.Status != "running" {
+			return nil, errBatchCanceled
+		}
+		if err := s.rootCtx.Err(); err != nil {
+			return nil, err
+		}
 		job, err := s.jobs.Submit(batch.TargetID, batch.ActorID, command, idempotencyKey)
-		var serviceErr *Error
-		queueFull := errors.As(err, &serviceErr) && serviceErr.Code == "job.queue_full"
-		if err == nil || !queueFull || time.Now().After(deadline) {
+		if err == nil {
 			return job, err
 		}
-		if !sleepContext(s.rootCtx, batchQueuePollPeriod) {
+		code, serviceError := errorCodeOf(err)
+		queueFull := serviceError && code == "job.queue_full"
+		targetBusy := serviceError && code == "job.target_busy"
+		if !queueFull && !targetBusy {
 			return nil, err
+		}
+		if queueFull {
+			if queueDeadline.IsZero() {
+				queueDeadline = time.Now().Add(batchQueueWait)
+			} else if time.Now().After(queueDeadline) {
+				return nil, err
+			}
+		}
+		if !sleepContext(s.rootCtx, batchQueuePollPeriod) {
+			current, lookupErr := s.batches.FindBatch(batch.ID, batch.TargetID)
+			if lookupErr == nil && current.Status != "pending" && current.Status != "running" {
+				return nil, errBatchCanceled
+			}
+			return nil, s.rootCtx.Err()
 		}
 	}
 }

@@ -218,6 +218,52 @@ func TestJobExecutesAndVerifiesFlatMoviePlan(t *testing.T) {
 	}
 }
 
+func TestSubmitDistinguishesActiveCandidateFromBusyTarget(t *testing.T) {
+	service, db, preview := newJobTestService(t, &memoryOpenList{entries: map[string]bool{}})
+	active := model.ScrapeJob{
+		TargetID: preview.TargetID, PreviewID: preview.ID, CandidateID: preview.CandidateID,
+		ActorID: 1, Status: "pending", Stage: "preparing",
+	}
+	if err := db.Create(&active).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := service.Submit(preview.TargetID, 1, SubmitJobCommand{
+		PreviewID: preview.ID, RenameMedia: true, ConfirmDirectoryFingerprint: preview.Fingerprint,
+	}, "same-candidate")
+	var serviceError *Error
+	if !errors.As(err, &serviceError) || serviceError.Code != "job.already_active" {
+		t.Fatalf("same candidate should be reported as already active: %v", err)
+	}
+
+	var firstCandidate model.MediaCandidate
+	if err := db.First(&firstCandidate, preview.CandidateID).Error; err != nil {
+		t.Fatal(err)
+	}
+	otherCandidate := firstCandidate
+	otherCandidate.ID = 0
+	otherCandidate.Path = "/movies/Other.mkv"
+	otherCandidate.Fingerprint = "sha256:other"
+	if err := db.Create(&otherCandidate).Error; err != nil {
+		t.Fatal(err)
+	}
+	otherPreview := *preview
+	otherPreview.ID = 0
+	otherPreview.CandidateID = otherCandidate.ID
+	otherPreview.Fingerprint = otherCandidate.Fingerprint
+	if err := db.Create(&otherPreview).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = service.Submit(otherPreview.TargetID, 1, SubmitJobCommand{
+		PreviewID: otherPreview.ID, RenameMedia: true, ConfirmDirectoryFingerprint: otherPreview.Fingerprint,
+	}, "busy-target")
+	serviceError = nil
+	if !errors.As(err, &serviceError) || serviceError.Code != "job.target_busy" {
+		t.Fatalf("different candidate on an active target should be reported as target busy: %v", err)
+	}
+}
+
 func TestFailedUploadRetriesFromOperationCheckpoint(t *testing.T) {
 	remote := &memoryOpenList{entries: map[string]bool{"/movies/Arrival.mkv": false}, failUploadOnce: true}
 	service, _, preview := newJobTestService(t, remote)
