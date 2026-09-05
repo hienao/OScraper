@@ -42,3 +42,23 @@ func TestFlatMovieJobPlanMovesThenRenames(t *testing.T) {
 		t.Fatalf("unexpected flat movie operations: %#v", operations)
 	}
 }
+
+func TestLooseMovieVersionsShareOneCreatedDirectory(t *testing.T) {
+	root := "/movies/Arrival (2016) {tmdbid-1}"
+	plan := PreviewPlan{
+		SourcePath: "/movies/Arrival.2016.2160p.mkv", ProposedDirectoryPath: root, OrganizeFlatMovie: true,
+		ProposedDirectoryCreates: []string{root},
+		ProposedFileRenames: []RenameItem{
+			{SourcePath: "/movies/Arrival.2016.2160p.mkv", TargetPath: root + "/Arrival (2016) {tmdbid-1} - 2160p.mkv", AssetType: "video"},
+			{SourcePath: "/movies/Arrival.2016.1080p.mp4", TargetPath: root + "/Arrival (2016) {tmdbid-1} - 1080p.mp4", AssetType: "video"},
+		},
+		Artifacts: []PreviewArtifact{{Path: root + "/movie.nfo", Kind: "nfo", Content: "<movie/>"}},
+	}
+	operations, err := buildJobOperations(plan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(operations) != 7 || operations[0].Type != "mkdir" || operations[1].Type != "move" || operations[2].Type != "rename" || operations[3].Type != "move" || operations[4].Type != "rename" || operations[5].Type != "upload" || operations[6].Type != "marker" {
+		t.Fatalf("unexpected loose multi-version operations: %#v", operations)
+	}
+}

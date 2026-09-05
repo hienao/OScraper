@@ -56,7 +56,7 @@ export const settingsApi = {
 
 export const previewApi = {
   search: (targetId: number, body: { candidate_id: number; title?: string; year?: number }) => apiRequest<TMDBSearchResult[]>(`/api/scrape-targets/${targetId}/previews/search`, { method: 'POST', body }),
-  create: (targetId: number, body: { candidate_id: number; tmdb_id?: number; title?: string; year?: number }) => apiRequest<ScrapePreview>(`/api/scrape-targets/${targetId}/previews`, { method: 'POST', body }),
+  create: (targetId: number, body: { candidate_id: number; tmdb_id?: number; title?: string; year?: number; movie_version_labels?: Record<string, string> }) => apiRequest<ScrapePreview>(`/api/scrape-targets/${targetId}/previews`, { method: 'POST', body }),
   get: (targetId: number, previewId: number) => apiRequest<ScrapePreview>(`/api/scrape-targets/${targetId}/previews/${previewId}`),
 }
 

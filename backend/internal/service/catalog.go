@@ -386,7 +386,11 @@ func (s *CatalogService) InspectCandidate(ctx context.Context, targetID, candida
 		if !found {
 			return nil, Conflict("candidate.source_missing", "Media candidate no longer exists")
 		}
-		entries = relatedFlatAssets(candidate.Path, siblings)
+		if candidate.VideoCount > 1 {
+			entries = groupedFlatMovieAssets(candidate, siblings)
+		} else {
+			entries = relatedFlatAssets(candidate.Path, siblings)
+		}
 	} else {
 		state := &scanState{}
 		files, walkErr := s.walk(ctx, source, candidate.Path, candidate.Path, 1, refresh, state)
@@ -409,16 +413,45 @@ func (s *CatalogService) discover(ctx context.Context, target *model.ScrapeTarge
 		return nil, Conflict("scan.too_large", "Directory scan exceeds the safe entry limit")
 	}
 	candidates := make([]model.MediaCandidate, 0)
+	if target.LibraryType == "movie" {
+		groups := make(map[string]*flatMovieGroup)
+		for _, entry := range rootEntries {
+			if entry.IsDir || !media.IsVideoFile(entry.Name) || media.IsMovieExtra(target.RootPath, entry.Path) {
+				continue
+			}
+			info := media.ParseCandidate(strings.TrimSuffix(entry.Name, path.Ext(entry.Name)), entry.Name, target.LibraryType)
+			info = s.recognizeIfNeeded(ctx, info, entry.Name, entry.Name, target.LibraryType)
+			key := media.MovieIdentityKey(info, entry.Path)
+			group := groups[key]
+			if group == nil {
+				group = &flatMovieGroup{info: info}
+				groups[key] = group
+			}
+			group.videos = append(group.videos, entry)
+		}
+		keys := make([]string, 0, len(groups))
+		for key := range groups {
+			keys = append(keys, key)
+		}
+		sort.Strings(keys)
+		for _, key := range keys {
+			group := groups[key]
+			sort.Slice(group.videos, func(left, right int) bool { return group.videos[left].Path < group.videos[right].Path })
+			assets := flatMovieGroupAssets(group.videos, rootEntries)
+			scraped := true
+			for _, video := range group.videos {
+				if !hasFlatScrapeMarker(video.Path, assets) {
+					scraped = false
+					break
+				}
+			}
+			representative := group.videos[0]
+			candidates = append(candidates, makeCandidate(representative.Path, target.LibraryType, group.info, representative.Name, len(group.videos), assets, scraped))
+		}
+	}
 	for _, entry := range rootEntries {
 		if err := ctx.Err(); err != nil {
 			return nil, Internal("scan.canceled", "Directory scan was canceled", err)
-		}
-		if target.LibraryType == "movie" && !entry.IsDir && media.IsVideoFile(entry.Name) {
-			info := media.ParseCandidate(strings.TrimSuffix(entry.Name, path.Ext(entry.Name)), entry.Name, target.LibraryType)
-			info = s.recognizeIfNeeded(ctx, info, entry.Name, entry.Name, target.LibraryType)
-			assets := relatedFlatAssets(entry.Path, rootEntries)
-			candidates = append(candidates, makeCandidate(entry.Path, target.LibraryType, info, entry.Name, 1, assets, hasFlatScrapeMarker(entry.Path, assets)))
-			continue
 		}
 		if !entry.IsDir {
 			continue
@@ -436,6 +469,70 @@ func (s *CatalogService) discover(ctx context.Context, target *model.ScrapeTarge
 	}
 	sort.Slice(candidates, func(i, j int) bool { return candidates[i].Path < candidates[j].Path })
 	return candidates, nil
+}
+
+type flatMovieGroup struct {
+	info   media.Info
+	videos []openlist.DirectoryEntry
+}
+
+func flatMovieGroupAssets(videos, siblings []openlist.DirectoryEntry) []openlist.DirectoryEntry {
+	videoPaths := make(map[string]struct{}, len(videos))
+	for _, video := range videos {
+		videoPaths[video.Path] = struct{}{}
+	}
+	assets := make([]openlist.DirectoryEntry, 0)
+	seen := make(map[string]struct{})
+	for _, video := range videos {
+		for _, entry := range relatedFlatAssets(video.Path, siblings) {
+			if media.IsVideoFile(entry.Name) {
+				if _, belongs := videoPaths[entry.Path]; !belongs {
+					continue
+				}
+			}
+			if _, exists := seen[entry.Path]; exists {
+				continue
+			}
+			seen[entry.Path] = struct{}{}
+			assets = append(assets, entry)
+		}
+	}
+	sort.Slice(assets, func(left, right int) bool { return assets[left].Path < assets[right].Path })
+	return assets
+}
+
+func groupedFlatMovieAssets(candidate *model.MediaCandidate, siblings []openlist.DirectoryEntry) []openlist.DirectoryEntry {
+	videos := make([]openlist.DirectoryEntry, 0)
+	seen := make(map[string]struct{})
+	wantedKey := media.MovieIdentityKey(media.Info{Title: candidate.ParsedTitle, Year: candidate.Year, TMDBID: candidate.TMDBID}, candidate.Path)
+	for _, entry := range siblings {
+		if entry.IsDir || !media.IsVideoFile(entry.Name) || media.IsMovieExtra(path.Dir(candidate.Path), entry.Path) {
+			continue
+		}
+		info := media.ParseCandidate(strings.TrimSuffix(entry.Name, path.Ext(entry.Name)), entry.Name, "movie")
+		if media.MovieIdentityKey(info, entry.Path) == wantedKey {
+			videos = append(videos, entry)
+			seen[entry.Path] = struct{}{}
+		}
+	}
+	var previous []openlist.DirectoryEntry
+	_ = json.Unmarshal([]byte(candidate.ManifestJSON), &previous)
+	previousVideos := make(map[string]struct{})
+	for _, entry := range previous {
+		if !entry.IsDir && media.IsVideoFile(entry.Name) {
+			previousVideos[entry.Path] = struct{}{}
+		}
+	}
+	for _, entry := range siblings {
+		if _, wasGrouped := previousVideos[entry.Path]; !wasGrouped {
+			continue
+		}
+		if _, exists := seen[entry.Path]; !exists {
+			videos = append(videos, entry)
+			seen[entry.Path] = struct{}{}
+		}
+	}
+	return flatMovieGroupAssets(videos, siblings)
 }
 
 func (s *CatalogService) recognizeIfNeeded(ctx context.Context, parsed media.Info, fileName, relativePath, libraryType string) media.Info {

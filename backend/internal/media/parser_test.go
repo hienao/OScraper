@@ -41,6 +41,35 @@ func TestSeasonAliasesAndTMDBID(t *testing.T) {
 	}
 }
 
+func TestMovieVersionLabelInference(t *testing.T) {
+	tests := map[string]string{
+		"Movie (2020) - 2160p.x265.AAC.mkv":                 "2160p",
+		"Movie.2020.1080p.WEB-DL.mkv":                       "1080p WEB-DL",
+		"Movie (2020) - Director's Cut.2160p.HDR.Remux.mkv": "Director's Cut 2160p HDR Remux",
+		"Movie (2020) - Open.Matte.mkv":                     "Open Matte",
+	}
+	for name, expected := range tests {
+		if result := InferMovieVersionLabel(name); result.Label != expected {
+			t.Fatalf("%q: got %#v, want %q", name, result, expected)
+		}
+	}
+	if result := InferMovieVersionLabel("Movie (2020).mkv"); result.Label != "" {
+		t.Fatalf("plain movie unexpectedly received a version: %#v", result)
+	}
+}
+
+func TestMovieExtraAndMultipartClassification(t *testing.T) {
+	if !IsMovieExtra("/movies/Film", "/movies/Film/trailers/Film-trailer.mkv") {
+		t.Fatal("trailer directory was not classified as an extra")
+	}
+	if IsMovieExtra("/movies/Film", "/movies/Film/Film - 2160p.mkv") {
+		t.Fatal("main version was classified as an extra")
+	}
+	if !IsMultipartMovieFile("Film.CD1.mkv") || IsMultipartMovieFile("Film.2160p.mkv") {
+		t.Fatal("multipart classification failed")
+	}
+}
+
 func TestVideoExtensionsAreCaseInsensitive(t *testing.T) {
 	if !IsVideoFile("Film.MKV") || IsVideoFile("poster.jpg") {
 		t.Fatal("unexpected video extension classification")

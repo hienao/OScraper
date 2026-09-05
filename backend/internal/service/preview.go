@@ -49,10 +49,11 @@ type SearchPreviewCommand struct {
 }
 
 type CreatePreviewCommand struct {
-	CandidateID uint
-	TMDBID      int
-	Title       string
-	Year        int
+	CandidateID        uint
+	TMDBID             int
+	Title              string
+	Year               int
+	MovieVersionLabels map[string]string
 }
 
 type RenameItem struct {
@@ -75,24 +76,32 @@ type EpisodeFilePlan struct {
 	Episode    int    `json:"episode"`
 }
 
+type MovieVersionPlan struct {
+	SourcePath  string `json:"source_path"`
+	TargetPath  string `json:"target_path"`
+	Label       string `json:"label"`
+	LabelSource string `json:"label_source"`
+}
+
 type PreviewPlan struct {
-	ReadOnly                 bool              `json:"read_only"`
-	Ready                    bool              `json:"ready"`
-	RenameAllowed            bool              `json:"rename_allowed"`
-	OrganizeFlatMovie        bool              `json:"organize_flat_movie"`
-	SourcePath               string            `json:"source_path"`
-	ProposedDirectoryName    string            `json:"proposed_directory_name"`
-	ProposedDirectoryPath    string            `json:"proposed_directory_path"`
-	ScrapeMarkerPath         string            `json:"scrape_marker_path"`
-	ProposedDirectoryCreates []string          `json:"proposed_directory_creates"`
-	ProposedDirectoryRenames []RenameItem      `json:"proposed_directory_renames"`
-	ProposedFileRenames      []RenameItem      `json:"proposed_file_renames"`
-	GeneratedFiles           []string          `json:"generated_files"`
-	Artifacts                []PreviewArtifact `json:"artifacts"`
-	EpisodeFiles             []EpisodeFilePlan `json:"episode_files"`
-	SkippedEpisodes          []EpisodeFilePlan `json:"skipped_episodes"`
-	Warnings                 []string          `json:"warnings"`
-	Conflicts                []PlanConflict    `json:"conflicts"`
+	ReadOnly                 bool               `json:"read_only"`
+	Ready                    bool               `json:"ready"`
+	RenameAllowed            bool               `json:"rename_allowed"`
+	OrganizeFlatMovie        bool               `json:"organize_flat_movie"`
+	SourcePath               string             `json:"source_path"`
+	ProposedDirectoryName    string             `json:"proposed_directory_name"`
+	ProposedDirectoryPath    string             `json:"proposed_directory_path"`
+	ScrapeMarkerPath         string             `json:"scrape_marker_path"`
+	ProposedDirectoryCreates []string           `json:"proposed_directory_creates"`
+	ProposedDirectoryRenames []RenameItem       `json:"proposed_directory_renames"`
+	ProposedFileRenames      []RenameItem       `json:"proposed_file_renames"`
+	GeneratedFiles           []string           `json:"generated_files"`
+	Artifacts                []PreviewArtifact  `json:"artifacts"`
+	EpisodeFiles             []EpisodeFilePlan  `json:"episode_files"`
+	SkippedEpisodes          []EpisodeFilePlan  `json:"skipped_episodes"`
+	MovieVersions            []MovieVersionPlan `json:"movie_versions"`
+	Warnings                 []string           `json:"warnings"`
+	Conflicts                []PlanConflict     `json:"conflicts"`
 }
 
 type PlanConflict struct {
@@ -209,7 +218,7 @@ func (s *PreviewService) Create(ctx context.Context, targetID, actorID uint, req
 	if err != nil {
 		return nil, mapTMDBError(err)
 	}
-	plan := buildFullPreviewPlan(target, candidate, detail, entries, siblings)
+	plan := buildFullPreviewPlanWithVersionLabels(target, candidate, detail, entries, siblings, request.MovieVersionLabels)
 	if candidate.Kind != "movie" {
 		if seasonProvider, ok := s.provider.(TMDBSeasonCatalog); ok {
 			if err := expandEpisodeArtifacts(ctx, seasonProvider, config, detail, &plan); err != nil {
@@ -315,6 +324,9 @@ func previewResponse(preview *model.ScrapePreview, match tmdb.Detail, plan Previ
 	}
 	if plan.SkippedEpisodes == nil {
 		plan.SkippedEpisodes = []EpisodeFilePlan{}
+	}
+	if plan.MovieVersions == nil {
+		plan.MovieVersions = []MovieVersionPlan{}
 	}
 	if plan.Warnings == nil {
 		plan.Warnings = []string{}
