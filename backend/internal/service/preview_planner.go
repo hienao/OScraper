@@ -21,6 +21,10 @@ type renamePlanner struct {
 }
 
 func buildFullPreviewPlan(target *model.ScrapeTarget, candidate *model.MediaCandidate, detail *tmdb.Detail, entries, siblings []openlist.DirectoryEntry) PreviewPlan {
+	return buildFullPreviewPlanWithVersionLabels(target, candidate, detail, entries, siblings, nil)
+}
+
+func buildFullPreviewPlanWithVersionLabels(target *model.ScrapeTarget, candidate *model.MediaCandidate, detail *tmdb.Detail, entries, siblings []openlist.DirectoryEntry, versionLabels map[string]string) PreviewPlan {
 	standardName := safeMediaName(detail.Title)
 	if detail.Year > 0 {
 		standardName += fmt.Sprintf(" (%d)", detail.Year)
@@ -47,7 +51,7 @@ func buildFullPreviewPlan(target *model.ScrapeTarget, candidate *model.MediaCand
 		ReadOnly: true, RenameAllowed: target.RenameEnabled, OrganizeFlatMovie: flatMovie,
 		SourcePath: candidate.Path, ProposedDirectoryName: path.Base(finalRoot), ProposedDirectoryPath: finalRoot,
 		ProposedDirectoryCreates: []string{}, ProposedDirectoryRenames: []RenameItem{},
-		ProposedFileRenames: []RenameItem{}, GeneratedFiles: []string{}, Artifacts: []PreviewArtifact{}, EpisodeFiles: []EpisodeFilePlan{}, SkippedEpisodes: []EpisodeFilePlan{}, Warnings: []string{}, Conflicts: []PlanConflict{},
+		ProposedFileRenames: []RenameItem{}, GeneratedFiles: []string{}, Artifacts: []PreviewArtifact{}, EpisodeFiles: []EpisodeFilePlan{}, SkippedEpisodes: []EpisodeFilePlan{}, MovieVersions: []MovieVersionPlan{}, Warnings: []string{}, Conflicts: []PlanConflict{},
 	}
 	plan.ScrapeMarkerPath = markerPathForPlan(plan)
 	planner := newRenamePlanner(&plan, entries, siblings)
@@ -65,7 +69,7 @@ func buildFullPreviewPlan(target *model.ScrapeTarget, candidate *model.MediaCand
 	}
 
 	if candidate.Kind == "movie" {
-		planner.planMovie(candidate, entries, siblings, standardName, finalRoot, target.RenameEnabled)
+		planner.planMovie(candidate, entries, siblings, standardName, finalRoot, target.RenameEnabled, versionLabels)
 	} else {
 		planner.planSeries(candidate, entries, detail.Title, finalRoot, target.RenameEnabled)
 	}
@@ -76,6 +80,14 @@ func buildFullPreviewPlan(target *model.ScrapeTarget, candidate *model.MediaCand
 		metadataDetail.MediaType = "tv"
 	}
 	plan.Artifacts = buildMetadataArtifacts(&metadataDetail, finalRoot, standardName, time.Now().UTC())
+	if candidate.Kind == "movie" && len(plan.MovieVersions) > 1 {
+		for index := range plan.Artifacts {
+			if plan.Artifacts[index].Kind == "nfo" {
+				plan.Artifacts[index].Path = path.Join(finalRoot, "movie.nfo")
+				break
+			}
+		}
+	}
 	for _, artifact := range plan.Artifacts {
 		plan.GeneratedFiles = append(plan.GeneratedFiles, artifact.Path)
 	}
@@ -93,31 +105,86 @@ func newRenamePlanner(plan *PreviewPlan, groups ...[]openlist.DirectoryEntry) *r
 	return planner
 }
 
-func (p *renamePlanner) planMovie(candidate *model.MediaCandidate, entries, siblings []openlist.DirectoryEntry, standardName, finalRoot string, rename bool) {
-	if !rename {
-		return
-	}
+func (p *renamePlanner) planMovie(candidate *model.MediaCandidate, entries, siblings []openlist.DirectoryEntry, standardName, finalRoot string, rename bool, versionLabels map[string]string) {
 	assets := entries
 	if media.IsVideoFile(path.Base(candidate.Path)) {
-		assets = relatedFlatAssets(candidate.Path, siblings)
-		if len(assets) == 0 {
-			assets = entries
+		if candidate.VideoCount <= 1 {
+			assets = relatedFlatAssets(candidate.Path, siblings)
+			if len(assets) == 0 {
+				assets = entries
+			}
 		}
 	}
-	videos := videoEntries(assets)
+	videos := movieMainVideoEntries(candidate, assets)
 	if len(videos) == 0 {
 		p.addConflict("video_missing", candidate.Path, "")
 		return
 	}
-	if len(videos) > 1 {
-		p.addConflict("multiple_movie_videos", candidate.Path, finalRoot)
+	multiVersion := len(videos) > 1
+	if multiVersion && media.IsVideoFile(path.Base(candidate.Path)) && !rename {
+		p.addConflict("movie_versions_require_rename", candidate.Path, finalRoot)
+	}
+	if len(videos) > 8 {
+		p.addConflict("movie_version_limit_exceeded", candidate.Path, finalRoot)
+	}
+	if multiVersion && !media.IsVideoFile(path.Base(candidate.Path)) {
+		for _, video := range videos {
+			if path.Dir(video.Path) != candidate.Path {
+				p.addConflict("movie_versions_not_colocated", video.Path, candidate.Path)
+			}
+		}
+	}
+	if multiVersion {
+		for _, video := range videos {
+			if media.IsMultipartMovieFile(video.Name) {
+				p.addConflict("multipart_movie_unsupported", video.Path, "")
+			}
+		}
+		if containsNFO(assets) {
+			p.plan.Warnings = appendUnique(p.plan.Warnings, "legacy_movie_nfo_preserved")
+		}
 	}
 	claimedAssets := map[string]struct{}{}
+	claimedLabels := map[string]string{}
 	for _, video := range videos {
 		targetBase := standardName
-		targetVideo := path.Join(finalRoot, targetBase+path.Ext(video.Name))
-		p.addRename(video.Path, targetVideo, "video")
-		p.planCompanions(video, assets, targetBase, finalRoot, claimedAssets)
+		label, labelSource := "", ""
+		labelValid := true
+		if multiVersion {
+			inferred := media.InferMovieVersionLabel(video.Name)
+			label, labelSource = inferred.Label, inferred.Source
+			if override, exists := versionLabels[video.Path]; exists {
+				label = safeVersionLabel(override)
+				labelSource = "user"
+			}
+			if label == "" {
+				p.addConflict("movie_version_label_missing", video.Path, "")
+				labelValid = false
+			} else {
+				key := strings.ToLower(label)
+				if owner, exists := claimedLabels[key]; exists && owner != video.Path {
+					p.addConflict("movie_version_label_duplicate", video.Path, owner)
+					labelValid = false
+				} else {
+					claimedLabels[key] = video.Path
+				}
+				if labelValid {
+					targetBase += " - " + label
+				}
+			}
+		}
+		targetVideo := video.Path
+		if rename && labelValid {
+			targetVideo = path.Join(finalRoot, targetBase+path.Ext(video.Name))
+			p.addRename(video.Path, targetVideo, "video")
+			p.planCompanions(video, assets, targetBase, finalRoot, claimedAssets, multiVersion)
+		}
+		if multiVersion {
+			if !labelValid {
+				targetVideo = ""
+			}
+			p.plan.MovieVersions = append(p.plan.MovieVersions, MovieVersionPlan{SourcePath: video.Path, TargetPath: targetVideo, Label: label, LabelSource: labelSource})
+		}
 	}
 	if rename && media.IsVideoFile(path.Base(candidate.Path)) {
 		flatMarkerPath := candidate.Path + scrapeMarkerSuffix
@@ -192,10 +259,13 @@ func (p *renamePlanner) planSeries(candidate *model.MediaCandidate, entries []op
 	}
 }
 
-func (p *renamePlanner) planCompanions(video openlist.DirectoryEntry, entries []openlist.DirectoryEntry, targetBase, targetDirectory string, claimed map[string]struct{}) {
+func (p *renamePlanner) planCompanions(video openlist.DirectoryEntry, entries []openlist.DirectoryEntry, targetBase, targetDirectory string, claimed map[string]struct{}, skipNFO ...bool) {
 	videoBase := strings.TrimSuffix(video.Name, path.Ext(video.Name))
 	for _, entry := range entries {
 		if entry.IsDir || entry.Path == video.Path || path.Dir(entry.Path) != path.Dir(video.Path) || media.IsVideoFile(entry.Name) || isScrapeMarkerName(entry.Name) {
+			continue
+		}
+		if len(skipNFO) > 0 && skipNFO[0] && strings.EqualFold(path.Ext(entry.Name), ".nfo") {
 			continue
 		}
 		key := strings.ToLower(entry.Path)
@@ -206,11 +276,32 @@ func (p *renamePlanner) planCompanions(video openlist.DirectoryEntry, entries []
 		if entryBase != videoBase && !strings.HasPrefix(entryBase, videoBase+".") && !strings.HasPrefix(entryBase, videoBase+"-") && !strings.HasPrefix(entryBase, videoBase+"_") {
 			continue
 		}
+		if len(skipNFO) > 0 && skipNFO[0] && movieCompanionOwner(entry, entries) != video.Path {
+			continue
+		}
 		suffix := strings.TrimPrefix(entryBase, videoBase)
 		targetName := targetBase + suffix + path.Ext(entry.Name)
 		p.addRename(entry.Path, path.Join(targetDirectory, targetName), assetType(entry.Name))
 		claimed[key] = struct{}{}
 	}
+}
+
+func movieCompanionOwner(companion openlist.DirectoryEntry, entries []openlist.DirectoryEntry) string {
+	companionBase := strings.TrimSuffix(companion.Name, path.Ext(companion.Name))
+	owner, longest := "", -1
+	for _, candidate := range entries {
+		if candidate.IsDir || !media.IsVideoFile(candidate.Name) || path.Dir(candidate.Path) != path.Dir(companion.Path) {
+			continue
+		}
+		videoBase := strings.TrimSuffix(candidate.Name, path.Ext(candidate.Name))
+		if companionBase != videoBase && !strings.HasPrefix(companionBase, videoBase+".") && !strings.HasPrefix(companionBase, videoBase+"-") && !strings.HasPrefix(companionBase, videoBase+"_") {
+			continue
+		}
+		if len(videoBase) > longest {
+			owner, longest = candidate.Path, len(videoBase)
+		}
+	}
+	return owner
 }
 
 func (p *renamePlanner) addCreate(targetPath, sourceContext string) {
@@ -265,6 +356,35 @@ func videoEntries(entries []openlist.DirectoryEntry) []openlist.DirectoryEntry {
 	}
 	sort.Slice(result, func(left, right int) bool { return result[left].Path < result[right].Path })
 	return result
+}
+
+func movieMainVideoEntries(candidate *model.MediaCandidate, entries []openlist.DirectoryEntry) []openlist.DirectoryEntry {
+	result := make([]openlist.DirectoryEntry, 0)
+	root := candidate.Path
+	if media.IsVideoFile(path.Base(candidate.Path)) {
+		root = path.Dir(candidate.Path)
+	}
+	for _, entry := range videoEntries(entries) {
+		if !media.IsMovieExtra(root, entry.Path) {
+			result = append(result, entry)
+		}
+	}
+	return result
+}
+
+func containsNFO(entries []openlist.DirectoryEntry) bool {
+	for _, entry := range entries {
+		if !entry.IsDir && strings.EqualFold(path.Ext(entry.Name), ".nfo") {
+			return true
+		}
+	}
+	return false
+}
+
+func safeVersionLabel(value string) string {
+	value = safeMediaName(value)
+	value = strings.Join(strings.Fields(strings.NewReplacer(".", " ", "_", " ").Replace(value)), " ")
+	return strings.Trim(value, " -")
 }
 
 func relatedFlatAssets(videoPath string, siblings []openlist.DirectoryEntry) []openlist.DirectoryEntry {

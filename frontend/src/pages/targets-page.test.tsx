@@ -14,6 +14,8 @@ const mocks = vi.hoisted(() => ({
   connectionList: vi.fn(),
   connectionTree: vi.fn(),
   localStatus: vi.fn(),
+  previewSearch: vi.fn(),
+  previewCreate: vi.fn(),
 }))
 
 vi.mock('@/api/services', () => ({
@@ -25,7 +27,7 @@ vi.mock('@/api/services', () => ({
   },
   connectionApi: { list: mocks.connectionList, tree: mocks.connectionTree },
   localStorageApi: { status: mocks.localStatus, tree: vi.fn() },
-  previewApi: { search: vi.fn(), create: vi.fn() },
+  previewApi: { search: mocks.previewSearch, create: mocks.previewCreate },
   jobApi: { submit: vi.fn() },
 }))
 
@@ -169,4 +171,38 @@ it('stops a running scrape batch and shows the canceled summary', async () => {
 
   await waitFor(() => expect(mocks.targetCancelBatch).toHaveBeenCalledWith(2, 5))
   expect(await screen.findByText('已提交 0 · 已跳过 2 · 失败 0')).toBeInTheDocument()
+})
+
+it('lets the user edit movie version labels and rebuild the preview', async () => {
+  const candidate = { ...batchCandidates[0], tmdb_id: 447365, video_count: 2 }
+  mocks.targetScan.mockResolvedValue({
+    id: 8, target_id: 2, status: 'succeeded', candidate_count: 1, video_count: 2, scraped_candidate_count: 0,
+    created_at: new Date().toISOString(), candidates: [candidate],
+  })
+  const versionPaths = ['/media/Dune.2021.2160p.mkv', '/media/Dune.2021.1080p.mkv']
+  mocks.previewCreate.mockResolvedValue({
+    id: 20, target_id: 2, candidate_id: 11, fingerprint: 'f1', expires_at: new Date().toISOString(), created_at: new Date().toISOString(),
+    match: { id: 447365, media_type: 'movie', title: 'Dune', original_title: 'Dune', year: 2021, overview: '', poster_url: '', backdrop_url: '', vote_average: 8, genres: [], studios: [] },
+    plan: {
+      read_only: true, ready: true, rename_allowed: true, organize_flat_movie: true, source_path: versionPaths[0], scrape_marker_path: '/media/Dune/.oscraper-scraped.v1', proposed_directory_name: 'Dune', proposed_directory_path: '/media/Dune',
+      proposed_directory_creates: ['/media/Dune'], proposed_directory_renames: [], proposed_file_renames: [], generated_files: ['/media/Dune/movie.nfo'], artifacts: [], episode_files: [], skipped_episodes: [], warnings: [], conflicts: [],
+      movie_versions: [
+        { source_path: versionPaths[0], target_path: '/media/Dune/Dune - 2160p.mkv', label: '2160p', label_source: 'resolution' },
+        { source_path: versionPaths[1], target_path: '/media/Dune/Dune - 1080p.mkv', label: '1080p', label_source: 'resolution' },
+      ],
+    },
+  })
+  renderTargets()
+
+  fireEvent.click(await screen.findByRole('button', { name: '扫描媒体' }))
+  fireEvent.click(await screen.findByRole('button', { name: 'TMDB 预览' }))
+  const inputs = await screen.findAllByLabelText('版本标签')
+  fireEvent.change(inputs[0], { target: { value: '2160p Remux' } })
+  fireEvent.click(screen.getByRole('button', { name: '应用标签' }))
+
+  await waitFor(() => expect(mocks.previewCreate).toHaveBeenLastCalledWith(2, {
+    candidate_id: 11,
+    tmdb_id: 447365,
+    movie_version_labels: { [versionPaths[0]]: '2160p Remux', [versionPaths[1]]: '1080p' },
+  }))
 })

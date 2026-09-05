@@ -98,14 +98,15 @@ func (r previewSearchRequest) command() service.SearchPreviewCommand {
 }
 
 type createPreviewRequest struct {
-	CandidateID uint   `json:"candidate_id" binding:"required"`
-	TMDBID      int    `json:"tmdb_id" binding:"omitempty,min=1"`
-	Title       string `json:"title" binding:"max=500"`
-	Year        int    `json:"year" binding:"omitempty,min=1870,max=2200"`
+	CandidateID        uint              `json:"candidate_id" binding:"required"`
+	TMDBID             int               `json:"tmdb_id" binding:"omitempty,min=1"`
+	Title              string            `json:"title" binding:"max=500"`
+	Year               int               `json:"year" binding:"omitempty,min=1870,max=2200"`
+	MovieVersionLabels map[string]string `json:"movie_version_labels" binding:"omitempty,max=8"`
 }
 
 func (r createPreviewRequest) command() service.CreatePreviewCommand {
-	return service.CreatePreviewCommand{CandidateID: r.CandidateID, TMDBID: r.TMDBID, Title: r.Title, Year: r.Year}
+	return service.CreatePreviewCommand{CandidateID: r.CandidateID, TMDBID: r.TMDBID, Title: r.Title, Year: r.Year, MovieVersionLabels: r.MovieVersionLabels}
 }
 
 type submitJobRequest struct {

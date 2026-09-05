@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -173,6 +174,53 @@ func TestMovieScanFindsFoldersAndFlatVideos(t *testing.T) {
 	}
 	if result.Candidates[0].Fingerprint[:7] != "sha256:" {
 		t.Fatalf("unexpected fingerprint: %s", result.Candidates[0].Fingerprint)
+	}
+}
+
+func TestMovieScanGroupsLooseVersionsByTitleAndYear(t *testing.T) {
+	service, _ := newCatalogTestService(t, "movie", map[string][]openlist.DirectoryEntry{
+		"/media/library": {
+			{Name: "Arrival.2016.2160p.mkv", Path: "/media/library/Arrival.2016.2160p.mkv", Size: 200},
+			{Name: "Arrival.2016.2160p.zh.srt", Path: "/media/library/Arrival.2016.2160p.zh.srt", Size: 10},
+			{Name: "Arrival.2016.1080p.mp4", Path: "/media/library/Arrival.2016.1080p.mp4", Size: 100},
+			{Name: "Unrelated.mkv", Path: "/media/library/Unrelated.mkv", Size: 50},
+		},
+	})
+	result, err := service.Scan(context.Background(), 1, 1, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.CandidateCount != 2 || result.VideoCount != 3 {
+		t.Fatalf("unexpected grouped scan totals: %#v", result.ScanRun)
+	}
+	var grouped *model.MediaCandidate
+	for index := range result.Candidates {
+		if result.Candidates[index].ParsedTitle == "Arrival" {
+			grouped = &result.Candidates[index]
+		}
+	}
+	if grouped == nil || grouped.VideoCount != 2 {
+		t.Fatalf("loose versions were not grouped: %#v", result.Candidates)
+	}
+	var manifest []openlist.DirectoryEntry
+	if err := json.Unmarshal([]byte(grouped.ManifestJSON), &manifest); err != nil || len(manifest) != 3 {
+		t.Fatalf("group assets were not persisted: %#v, %v", manifest, err)
+	}
+}
+
+func TestMovieScanKeepsLooseFilesWithoutYearSeparate(t *testing.T) {
+	service, _ := newCatalogTestService(t, "movie", map[string][]openlist.DirectoryEntry{
+		"/media/library": {
+			{Name: "Arrival.2160p.mkv", Path: "/media/library/Arrival.2160p.mkv", Size: 200},
+			{Name: "Arrival.1080p.mp4", Path: "/media/library/Arrival.1080p.mp4", Size: 100},
+		},
+	})
+	result, err := service.Scan(context.Background(), 1, 1, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.CandidateCount != 2 || result.Candidates[0].VideoCount != 1 || result.Candidates[1].VideoCount != 1 {
+		t.Fatalf("yearless loose files were grouped unsafely: %#v", result.Candidates)
 	}
 }
 

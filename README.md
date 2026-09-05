@@ -15,6 +15,7 @@ OScraper is designed for people who want a controlled, auditable alternative to 
 - **Safe writes** — verify fresh directory fingerprints, reject stale previews, and never overwrite existing media paths.
 - **Recoverable jobs** — run scraping through persistent bounded workers with per-operation checkpoints and retry support.
 - **Media-server metadata** — generate movie, TV show, and episode NFO XML compatible with Kodi, Jellyfin, and Emby.
+- **Multi-version movies** — organize same-directory or loose title/year variants into Jellyfin/Emby-style `Movie - Version.ext` files with editable version labels and shared `movie.nfo` metadata.
 - **Operational visibility** — search job history, API logs, application logs, and administrator audit logs; export logs as CSV.
 - **User-friendly interface** — responsive light/dark UI with English and Simplified Chinese.
 - **Simple self-hosting** — one multi-platform image for `linux/amd64` and `linux/arm64`, backed by SQLite.

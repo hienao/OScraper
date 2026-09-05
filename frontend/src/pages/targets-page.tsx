@@ -93,6 +93,7 @@ export function TargetsPage() {
   const [searchYear, setSearchYear] = useState('')
   const [searchResults, setSearchResults] = useState<TMDBSearchResult[]>([])
   const [preview, setPreview] = useState<ScrapePreview | null>(null)
+  const [movieVersionLabels, setMovieVersionLabels] = useState<Record<string, string>>({})
   const [matchError, setMatchError] = useState<string | null>(null)
   const [notice, setNotice] = useState<{ variant: 'error' | 'success'; text: string } | null>(null)
 
@@ -142,8 +143,11 @@ export function TargetsPage() {
     onError: (error) => setMatchError(errorMessage(error, t('targets.matchError'))),
   })
   const createPreview = useMutation({
-    mutationFn: ({ candidate, tmdbId }: { candidate: MediaCandidate; tmdbId?: number }) => previewApi.create(candidate.target_id, { candidate_id: candidate.id, tmdb_id: tmdbId }),
-    onSuccess: (result) => setPreview(result),
+    mutationFn: ({ candidate, tmdbId, versionLabels }: { candidate: MediaCandidate; tmdbId?: number; versionLabels?: Record<string, string> }) => previewApi.create(candidate.target_id, { candidate_id: candidate.id, tmdb_id: tmdbId, movie_version_labels: versionLabels }),
+    onSuccess: (result) => {
+      setPreview(result)
+      setMovieVersionLabels(Object.fromEntries((result.plan.movie_versions ?? []).map((version) => [version.source_path, version.label])))
+    },
     onError: (error) => setMatchError(errorMessage(error, t('targets.previewError'))),
   })
   const executeJob = useMutation({
@@ -203,6 +207,7 @@ export function TargetsPage() {
     setSearchYear(candidate.year ? String(candidate.year) : '')
     setSearchResults([])
     setPreview(null)
+    setMovieVersionLabels({})
     setMatchError(null)
     if (candidate.tmdb_id) createPreview.mutate({ candidate, tmdbId: candidate.tmdb_id })
     else searchTMDB.mutate({ candidate, title: candidate.parsed_title, year: candidate.year })
@@ -218,6 +223,12 @@ export function TargetsPage() {
   function executePreview(value: ScrapePreview) {
     const renameCount = value.plan.proposed_directory_creates.length + value.plan.proposed_directory_renames.length + value.plan.proposed_file_renames.length
     if (window.confirm(t('targets.executeConfirm', { renames: renameCount, files: value.plan.artifacts.length }))) executeJob.mutate(value)
+  }
+
+  function applyMovieVersionLabels() {
+    if (!matchCandidate || !preview) return
+    setMatchError(null)
+    createPreview.mutate({ candidate: matchCandidate, tmdbId: preview.match.id, versionLabels: movieVersionLabels })
   }
 
   async function submit(event: FormEvent) {
@@ -438,6 +449,15 @@ export function TargetsPage() {
                 {preview.match.backdrop_url && <img className="h-44 w-full object-cover" src={preview.match.backdrop_url} alt="" />}
                 <div className="grid gap-5 p-5 sm:grid-cols-[8rem_1fr]">{preview.match.poster_url ? <img className="w-32 rounded-xl object-cover" src={preview.match.poster_url} alt="" /> : <span className="grid h-48 w-32 place-items-center rounded-xl bg-neutral-100 dark:bg-neutral-900"><Movie size={28} /></span>}<div><div className="flex flex-wrap items-center gap-2"><h3 className="text-xl font-bold">{preview.match.title}</h3><Badge variant={preview.plan.ready ? 'soft' : 'outline'}>{t(preview.plan.ready ? 'targets.previewReady' : 'targets.previewBlocked')}</Badge><Badge variant="outline">{t('targets.readOnly')}</Badge></div><p className="mt-1 text-sm text-neutral-500">{preview.match.original_title} · {preview.match.year || '—'} · TMDB {preview.match.id} · ★ {preview.match.vote_average.toFixed(1)}</p><p className="mt-4 text-sm leading-6 text-neutral-700 dark:text-neutral-300">{preview.match.overview || t('targets.noOverview')}</p></div></div>
               </div>
+              {(preview.plan.movie_versions?.length ?? 0) > 1 && <div className="rounded-xl border border-neutral-200 p-4 dark:border-neutral-800">
+                <div className="flex flex-wrap items-start justify-between gap-3"><div><h3 className="font-semibold">{t('targets.movieVersions')}</h3><p className="mt-1 text-xs text-neutral-500">{t('targets.movieVersionsDescription')}</p></div><Button size="sm" variant="outline" className="min-h-11 sm:min-h-9" disabled={createPreview.isPending} onClick={applyMovieVersionLabels}>{createPreview.isPending ? t('targets.applyingVersionLabels') : t('targets.applyVersionLabels')}</Button></div>
+                <div className="mt-4 grid gap-3">
+                  {preview.plan.movie_versions.map((version, index) => <div key={version.source_path} className="grid min-w-0 gap-2 rounded-lg bg-neutral-50 p-3 dark:bg-neutral-900 sm:grid-cols-[minmax(0,1fr)_12rem] sm:items-center">
+                    <div className="min-w-0"><p className="break-all font-mono text-xs text-neutral-600 dark:text-neutral-400">{version.source_path}</p>{version.target_path && <p className="mt-1 break-all font-mono text-xs text-emerald-700 dark:text-emerald-300">→ {version.target_path}</p>}</div>
+                    <div className="min-w-0"><label className="mb-1 block text-xs font-medium text-neutral-600 dark:text-neutral-300" htmlFor={`movie-version-${index}`}>{t('targets.versionLabel')}</label><Input id={`movie-version-${index}`} value={movieVersionLabels[version.source_path] ?? ''} onChange={(event) => setMovieVersionLabels((current) => ({ ...current, [version.source_path]: event.target.value }))} placeholder={t('targets.versionLabelPlaceholder')} /></div>
+                  </div>)}
+                </div>
+              </div>}
               <div className="grid gap-4 lg:grid-cols-2">
                 <div className="rounded-xl border border-neutral-200 p-4 dark:border-neutral-800">
                   <h3 className="font-semibold">{t('targets.renamePlan')}</h3>

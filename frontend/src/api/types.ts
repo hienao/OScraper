@@ -265,6 +265,13 @@ export interface RenameItem {
   asset_type: string
 }
 
+export interface MovieVersionPlan {
+  source_path: string
+  target_path: string
+  label: string
+  label_source: 'explicit' | 'resolution' | 'derived' | 'user' | ''
+}
+
 export interface PreviewPlan {
   read_only: boolean
   ready: boolean
@@ -281,6 +288,7 @@ export interface PreviewPlan {
   artifacts: { path: string; kind: 'nfo' | 'poster' | 'backdrop' | 'episode_nfo' | 'episode_thumb'; source_url?: string; content?: string }[]
   episode_files: { source_path: string; target_path: string; season: number; episode: number }[]
   skipped_episodes: { source_path: string; target_path: string; season: number; episode: number }[]
+  movie_versions: MovieVersionPlan[]
   warnings: string[]
   conflicts: { code: string; source_path?: string; target_path?: string }[]
 }
