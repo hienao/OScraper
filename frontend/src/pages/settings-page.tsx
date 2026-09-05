@@ -16,6 +16,16 @@ import { errorMessage } from '@/lib/error-message'
 const customDomain = '__custom__'
 const tmdbAPIDomains = ['https://api.themoviedb.org', 'https://api.tmdb.org']
 const tmdbImageDomains = ['https://image.tmdb.org']
+const tmdbLanguages = [
+  { value: 'zh-CN', labelKey: 'simplifiedChinese' },
+  { value: 'zh-TW', labelKey: 'traditionalChinese' },
+  { value: 'en-US', labelKey: 'english' },
+  { value: 'ja-JP', labelKey: 'japanese' },
+  { value: 'ko-KR', labelKey: 'korean' },
+  { value: 'fr-FR', labelKey: 'french' },
+  { value: 'de-DE', labelKey: 'german' },
+  { value: 'es-ES', labelKey: 'spanish' },
+] as const
 
 const defaults: ScrapingSettingsInput = {
   api_key: '', base_url: tmdbAPIDomains[0], image_base_url: tmdbImageDomains[0],
@@ -26,6 +36,10 @@ const defaults: ScrapingSettingsInput = {
 
 function domainChoice(value: string, choices: string[]) {
   return choices.includes(value) ? value : customDomain
+}
+
+function languageChoice(value: string) {
+  return tmdbLanguages.some((language) => language.value === value) ? value : customDomain
 }
 
 export function SettingsPage() {
@@ -80,6 +94,7 @@ export function SettingsPage() {
 
   const apiDomain = domainChoice(form.base_url, tmdbAPIDomains)
   const imageDomain = domainChoice(form.image_base_url, tmdbImageDomains)
+  const metadataLanguage = languageChoice(form.language)
 
   return (
     <div className="mx-auto max-w-5xl space-y-5 px-4 py-8 sm:px-6 lg:px-8">
@@ -96,7 +111,8 @@ export function SettingsPage() {
               <FormField label={t('settings.imageBaseUrl')} description={t('settings.domainHint')}><AppSelect value={imageDomain} onValueChange={(value) => setForm({ ...form, image_base_url: value === customDomain ? '' : value })} ariaLabel={t('settings.imageBaseUrl')} options={[...tmdbImageDomains.map((value) => ({ value, label: value })), { value: customDomain, label: t('settings.customDomain') }]} /></FormField>
               {apiDomain === customDomain && <FormField label={t('settings.customAPIUrl')}><Input type="url" value={form.base_url} onChange={(event) => setForm({ ...form, base_url: event.target.value })} required /></FormField>}
               {imageDomain === customDomain && <FormField label={t('settings.customImageUrl')}><Input type="url" value={form.image_base_url} onChange={(event) => setForm({ ...form, image_base_url: event.target.value })} required /></FormField>}
-              <FormField label={t('settings.language')} description={t('settings.languageHint')}><Input value={form.language} onChange={(event) => setForm({ ...form, language: event.target.value })} placeholder="zh-CN" required /></FormField>
+              <FormField label={t('settings.language')} description={t('settings.languageHint')}><AppSelect value={metadataLanguage} onValueChange={(value) => setForm({ ...form, language: value === customDomain ? (metadataLanguage === customDomain ? form.language : '') : value })} ariaLabel={t('settings.language')} options={[...tmdbLanguages.map((language) => ({ value: language.value, label: `${t(`settings.languages.${language.labelKey}`)} (${language.value})` })), { value: customDomain, label: t('settings.customLanguage') }]} /></FormField>
+              {metadataLanguage === customDomain && <FormField label={t('settings.customLanguageCode')} description={t('settings.customLanguageHint')}><Input value={form.language} onChange={(event) => setForm({ ...form, language: event.target.value })} placeholder="pt-BR" required /></FormField>}
               <FormField label={t('settings.region')} description={t('settings.regionHint')}><Input value={form.region} onChange={(event) => setForm({ ...form, region: event.target.value.toUpperCase() })} placeholder="CN" maxLength={2} /></FormField>
               <FormField label={t('settings.posterSize')}><AppSelect value={form.poster_size} onValueChange={(poster_size) => setForm({ ...form, poster_size })} ariaLabel={t('settings.posterSize')} options={['w342', 'w500', 'w780', 'original'].map((value) => ({ value, label: value }))} /></FormField>
               <FormField label={t('settings.backdropSize')}><AppSelect value={form.backdrop_size} onValueChange={(backdrop_size) => setForm({ ...form, backdrop_size })} ariaLabel={t('settings.backdropSize')} options={['w780', 'w1280', 'original'].map((value) => ({ value, label: value }))} /></FormField>
