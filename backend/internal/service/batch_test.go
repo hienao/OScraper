@@ -61,14 +61,25 @@ func (s *stubBatchPreviewer) Create(ctx context.Context, _ uint, _ uint, request
 }
 
 type stubBatchJobSubmitter struct {
-	jobs []SubmitJobCommand
-	keys []string
-	err  error
+	jobs   []SubmitJobCommand
+	keys   []string
+	err    error
+	errs   []error
+	called chan struct{}
 }
 
 func (s *stubBatchJobSubmitter) Submit(targetID, actorID uint, request SubmitJobCommand, key string) (*model.ScrapeJob, error) {
 	s.jobs = append(s.jobs, request)
 	s.keys = append(s.keys, key)
+	if s.called != nil {
+		select {
+		case s.called <- struct{}{}:
+		default:
+		}
+	}
+	if index := len(s.jobs) - 1; index < len(s.errs) && s.errs[index] != nil {
+		return nil, s.errs[index]
+	}
 	if s.err != nil {
 		return nil, s.err
 	}
@@ -271,6 +282,67 @@ func TestBatchScrapeSkipsBlockedPlansAndActiveMedia(t *testing.T) {
 	}
 	if len(submitter.jobs) != 1 {
 		t.Fatalf("blocked plans must not reach the job queue: %#v", submitter.jobs)
+	}
+}
+
+func TestBatchScrapeWaitsForBusyTargetAndRetriesSubmission(t *testing.T) {
+	previewer := &stubBatchPreviewer{
+		searchResults: map[uint][]tmdb.SearchResult{1: {{ID: 1, Title: "One"}}},
+		preview:       readyPreview(),
+	}
+	submitter := &stubBatchJobSubmitter{errs: []error{&Error{Code: "job.target_busy"}}}
+	service, _ := newBatchTestService(t, previewer, submitter, []model.MediaCandidate{
+		batchCandidate("/movies/One/One.mkv", "One"),
+	})
+	originalPollPeriod := batchQueuePollPeriod
+	batchQueuePollPeriod = time.Millisecond
+	t.Cleanup(func() { batchQueuePollPeriod = originalPollPeriod })
+
+	batch, err := service.StartBatch(1, 7, BatchScrapeCommand{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	result := waitForBatch(t, service, 1, batch.ID, 10*time.Second)
+	if result.Status != "succeeded" || result.SubmittedCount != 1 || result.SkippedCount != 0 || result.FailedCount != 0 {
+		t.Fatalf("unexpected batch result after target became idle: %#v", result.ScrapeBatchRun)
+	}
+	if len(submitter.jobs) != 2 || len(submitter.keys) != 2 || submitter.keys[0] != submitter.keys[1] {
+		t.Fatalf("target-busy submission was not retried idempotently: jobs=%d keys=%#v", len(submitter.jobs), submitter.keys)
+	}
+}
+
+func TestBatchScrapeCancelStopsBusyTargetWait(t *testing.T) {
+	previewer := &stubBatchPreviewer{
+		searchResults: map[uint][]tmdb.SearchResult{1: {{ID: 1, Title: "One"}}},
+		preview:       readyPreview(),
+	}
+	called := make(chan struct{}, 1)
+	submitter := &stubBatchJobSubmitter{err: &Error{Code: "job.target_busy"}, called: called}
+	service, _ := newBatchTestService(t, previewer, submitter, []model.MediaCandidate{
+		batchCandidate("/movies/One/One.mkv", "One"),
+	})
+	originalPollPeriod := batchQueuePollPeriod
+	batchQueuePollPeriod = time.Millisecond
+	t.Cleanup(func() { batchQueuePollPeriod = originalPollPeriod })
+
+	batch, err := service.StartBatch(1, 7, BatchScrapeCommand{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-called:
+	case <-time.After(time.Second):
+		t.Fatal("batch did not reach the target-busy wait")
+	}
+	if _, err := service.Cancel(1, batch.ID, 7); err != nil {
+		t.Fatal(err)
+	}
+	if err := service.Shutdown(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	result := waitForBatch(t, service, 1, batch.ID, 10*time.Second)
+	if result.Status != "canceled" || result.SkippedCount != 1 {
+		t.Fatalf("canceled batch remained stuck waiting for the target: %#v", result.ScrapeBatchRun)
 	}
 }
 

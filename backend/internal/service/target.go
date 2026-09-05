@@ -184,7 +184,7 @@ func (s *TargetService) Delete(id, actorID uint) error {
 }
 
 func (s *TargetService) requireIdle(id uint) error {
-	count, err := s.jobs.ActiveCount(id, 0)
+	count, err := s.jobs.ActiveByTarget(id)
 	if err != nil {
 		return Internal("target.job_check_failed", "Failed to check active scrape jobs", err)
 	}

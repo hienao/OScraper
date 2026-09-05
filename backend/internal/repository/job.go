@@ -48,17 +48,23 @@ func (r *JobRepository) FindIdempotent(actorID, previewID uint, key string) (*mo
 	return &job, nil
 }
 
-func (r *JobRepository) ActiveCount(targetID, candidateID uint) (int64, error) {
-	query := r.db.Model(&model.ScrapeJob{}).Where("status IN ?", []string{"pending", "running"})
-	if targetID > 0 && candidateID > 0 {
-		query = query.Where("target_id = ? OR candidate_id = ?", targetID, candidateID)
-	} else if targetID > 0 {
-		query = query.Where("target_id = ?", targetID)
-	} else if candidateID > 0 {
-		query = query.Where("candidate_id = ?", candidateID)
-	}
+func (r *JobRepository) ActiveByTarget(targetID uint) (int64, error) {
 	var count int64
-	err := retryLocked(func() error { return query.Count(&count).Error })
+	err := retryLocked(func() error {
+		return r.db.Model(&model.ScrapeJob{}).
+			Where("target_id = ? AND status IN ?", targetID, []string{"pending", "running"}).
+			Count(&count).Error
+	})
+	return count, err
+}
+
+func (r *JobRepository) ActiveByCandidate(candidateID uint) (int64, error) {
+	var count int64
+	err := retryLocked(func() error {
+		return r.db.Model(&model.ScrapeJob{}).
+			Where("candidate_id = ? AND status IN ?", candidateID, []string{"pending", "running"}).
+			Count(&count).Error
+	})
 	return count, err
 }
 

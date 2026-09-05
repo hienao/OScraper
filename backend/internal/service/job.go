@@ -240,12 +240,19 @@ func (s *JobService) Submit(targetID, actorID uint, request SubmitJobCommand, id
 			}
 		}
 	}
-	active, err := s.jobs.ActiveCount(targetID, preview.CandidateID)
+	active, err := s.jobs.ActiveByCandidate(preview.CandidateID)
 	if err != nil {
 		return nil, Internal("job.active_check_failed", "Failed to check active scrape jobs", err)
 	}
 	if active > 0 {
-		return nil, Conflict("job.already_active", "The target or media candidate already has an active job")
+		return nil, Conflict("job.already_active", "The media candidate already has an active job")
+	}
+	active, err = s.jobs.ActiveByTarget(targetID)
+	if err != nil {
+		return nil, Internal("job.active_check_failed", "Failed to check active scrape jobs", err)
+	}
+	if active > 0 {
+		return nil, Conflict("job.target_busy", "Another media job is active for this target")
 	}
 	select {
 	case s.slots <- struct{}{}:
@@ -311,12 +318,19 @@ func (s *JobService) Retry(id, actorID uint) (*model.ScrapeJob, error) {
 	if err != nil {
 		return nil, err
 	}
-	active, err := s.jobs.ActiveCount(job.TargetID, job.CandidateID)
+	active, err := s.jobs.ActiveByCandidate(job.CandidateID)
 	if err != nil {
 		return nil, Internal("job.active_check_failed", "Failed to check active scrape jobs", err)
 	}
 	if active > 0 {
-		return nil, Conflict("job.already_active", "The target or media candidate already has an active job")
+		return nil, Conflict("job.already_active", "The media candidate already has an active job")
+	}
+	active, err = s.jobs.ActiveByTarget(job.TargetID)
+	if err != nil {
+		return nil, Internal("job.active_check_failed", "Failed to check active scrape jobs", err)
+	}
+	if active > 0 {
+		return nil, Conflict("job.target_busy", "Another media job is active for this target")
 	}
 	select {
 	case s.slots <- struct{}{}:
